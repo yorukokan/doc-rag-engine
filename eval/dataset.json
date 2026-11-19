@@ -1,0 +1,122 @@
+[
+  {
+    "question": "DNS sorgusu hangi sunucu sırasıyla çözülür?",
+    "expected_source": "dns_ve_ag_notlari.md",
+    "expected_section": "DNS Nedir ve Nasıl Çalışır?",
+    "answerable": true
+  },
+  {
+    "question": "MX ve TXT kayıtları ne işe yarar?",
+    "expected_source": "dns_ve_ag_notlari.md",
+    "expected_section": "Temel DNS Kayıt Türleri",
+    "answerable": true
+  },
+  {
+    "question": "Wildcard DNS nedir ve ne gibi riskleri vardır?",
+    "expected_source": "dns_ve_ag_notlari.md",
+    "expected_section": "Wildcard DNS Kayıtları",
+    "answerable": true
+  },
+  {
+    "question": "DNS önbellek süresi düşük olursa ne olur?",
+    "expected_source": "dns_ve_ag_notlari.md",
+    "expected_section": "TTL (Time to Live) Kavramı",
+    "answerable": true
+  },
+  {
+    "question": "chmod 750 komutu hangi izinleri verir?",
+    "expected_source": "linux_temelleri.md",
+    "expected_section": "Dosya İzinleri (chmod ve chown)",
+    "answerable": true
+  },
+  {
+    "question": "Bir Linux servisinin sistem açılışında otomatik başlaması ve canlı log takibi nasıl yapılır?",
+    "expected_source": "linux_temelleri.md",
+    "expected_section": "Servis Yönetimi (systemd)",
+    "answerable": true
+  },
+  {
+    "question": "Bir klasörün diskte ne kadar yer kapladığını ve yanıt vermeyen bir sürecin nasıl kapatıldığını açıkla.",
+    "expected_source": "linux_temelleri.md",
+    "expected_section": "Süreç ve Kaynak İzleme",
+    "answerable": true
+  },
+  {
+    "question": "SSH bağlantılarında parola girişini kapatmak için hangi dosya düzenlenir?",
+    "expected_source": "linux_temelleri.md",
+    "expected_section": "SSH Güvenliği ve Anahtar Kullanımı",
+    "answerable": true
+  },
+  {
+    "question": "Stateful firewall ve NAT ne işe yarar?",
+    "expected_source": "ag_guvenligi.md",
+    "expected_section": "Firewall (Güvenlik Duvarı) ve NAT",
+    "answerable": true
+  },
+  {
+    "question": "Şubeler arası bağlantı ile uzaktan çalışan erişimi için hangi VPN türleri kullanılır?",
+    "expected_source": "ag_guvenligi.md",
+    "expected_section": "VPN ve Şifreli Tünelleme",
+    "answerable": true
+  },
+  {
+    "question": "TLS sertifikasının süresi dolduğunda veya alan adıyla uyuşmadığında ne olur?",
+    "expected_source": "ag_guvenligi.md",
+    "expected_section": "TLS/SSL ve Sertifika Mantığı",
+    "answerable": true
+  },
+  {
+    "question": "Layer 7 DDoS saldırılarına karşı hangi korunma yöntemleri kullanılır?",
+    "expected_source": "ag_guvenligi.md",
+    "expected_section": "DDoS Saldırıları ve Korunma Yöntemleri",
+    "answerable": true
+  },
+  {
+    "question": "HTTP 401 ve 403 durum kodları arasındaki fark nedir?",
+    "expected_source": "http_ve_api_notlari.md",
+    "expected_section": "HTTP Durum Kodları",
+    "answerable": true
+  },
+  {
+    "question": "REST mimarisinin stateless olması ne anlama gelir ve kısmi güncelleme için hangi metot kullanılır?",
+    "expected_source": "http_ve_api_notlari.md",
+    "expected_section": "REST API Temel Prensipleri",
+    "answerable": true
+  },
+  {
+    "question": "API istek sınırı aşıldığında hangi HTTP durum kodu döner?",
+    "expected_source": "http_ve_api_notlari.md",
+    "expected_section": "Rate Limiting ve Önbellekleme (Caching)",
+    "answerable": true
+  },
+  {
+    "question": "JWT token hangi üç bölümden oluşur ve isteklerde hangi başlıkla gönderilir?",
+    "expected_source": "http_ve_api_notlari.md",
+    "expected_section": "JWT (JSON Web Token) ile Kimlik Doğrulama",
+    "answerable": true
+  },
+  {
+    "question": "Docker container nedir ve nasıl kurulur?",
+    "expected_source": null,
+    "expected_section": null,
+    "answerable": false
+  },
+  {
+    "question": "Kubernetes Pod ve Deployment kavramları arasındaki fark nedir?",
+    "expected_source": null,
+    "expected_section": null,
+    "answerable": false
+  },
+  {
+    "question": "BGP yönlendirme protokolü otonom sistemler arasında nasıl çalışır?",
+    "expected_source": null,
+    "expected_section": null,
+    "answerable": false
+  },
+  {
+    "question": "PostgreSQL veritabanında VACUUM işlemi ne işe yarar?",
+    "expected_source": null,
+    "expected_section": null,
+    "answerable": false
+  }
+]

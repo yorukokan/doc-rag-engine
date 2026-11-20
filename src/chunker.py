@@ -2,7 +2,90 @@ import re
 from pathlib import Path
 
 
-def chunk_markdown(file_path: Path, max_chars: int = 800) -> list[dict]:
+def _tail_overlap(text: str, overlap_chars: int) -> str:
+    """Metnin sonundan kelime ortasını bölmeden yaklaşık overlap_chars kadar parça alır."""
+    if overlap_chars <= 0 or not text:
+        return ""
+    if len(text) <= overlap_chars:
+        return text.strip()
+    tail = text[-overlap_chars:]
+    # İlk boşluktan sonrasını al ki kelime yarım kesilmesin
+    first_space = tail.find(" ")
+    if first_space != -1 and first_space < len(tail) - 1:
+        tail = tail[first_space + 1 :]
+    return tail.strip()
+
+
+def _split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]:
+    """Tek bir uzun paragrafı kelime sınırlarından bölerek overlap ile parçalar."""
+    parts = []
+    start = 0
+    step = max(1, max_chars - overlap_chars)
+
+    while start < len(text):
+        end = start + max_chars
+        if end < len(text):
+            last_space = text.rfind(" ", start, end)
+            if last_space > start:
+                end = last_space
+        piece = text[start:end].strip()
+        if piece:
+            parts.append(piece)
+        if end >= len(text):
+            break
+        start = max(start + 1, end - overlap_chars)
+        # Kelime ortasından başlamamak için bir sonraki boşluğa kay
+        next_space = text.find(" ", start, end)
+        if next_space != -1:
+            start = next_space + 1
+    return parts
+
+
+def split_body_with_overlap(
+    body: str,
+    max_chars: int = 800,
+    overlap_chars: int = 120,
+) -> list[str]:
+    """Metni paragraf yapısını koruyarak max_chars sınırında ve overlap ile böler."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+    if not paragraphs:
+        return []
+
+    pieces: list[str] = []
+    current_text = ""
+
+    for para in paragraphs:
+        # Tek bir paragraf bile max_chars'tan uzunsa (ör. PDF metinleri) güvenli böl
+        if len(para) > max_chars:
+            if current_text:
+                pieces.append(current_text)
+                current_text = ""
+            pieces.extend(_split_long_text(para, max_chars, overlap_chars))
+            continue
+
+        if not current_text:
+            current_text = para
+        elif len(current_text) + len(para) + 2 <= max_chars:
+            current_text = f"{current_text}\n\n{para}"
+        else:
+            pieces.append(current_text)
+            overlap = _tail_overlap(current_text, overlap_chars)
+            if overlap and len(overlap) + len(para) + 2 <= max_chars:
+                current_text = f"{overlap}\n\n{para}"
+            else:
+                current_text = para
+
+    if current_text:
+        pieces.append(current_text)
+
+    return pieces
+
+
+def chunk_markdown(
+    file_path: Path,
+    max_chars: int = 800,
+    overlap_chars: int = 120,
+) -> list[dict]:
     # 1. Dosyayı oku
     text = file_path.read_text(encoding="utf-8")
 
@@ -25,30 +108,10 @@ def chunk_markdown(file_path: Path, max_chars: int = 800) -> list[dict]:
         if not body:
             continue
 
-        # Gövde 800 karakterden uzunsa paragraflara bölerek sığdır
-        paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
-        current_text = ""
-
-        for para in paragraphs:
-            if len(current_text) + len(para) + 2 <= max_chars:
-                current_text = f"{current_text}\n\n{para}".strip()
-            else:
-                if current_text:
-                    chunks.append({
-                        "chunk_id": f"{file_path.stem}_{chunk_index}",
-                        "text": f"{heading}\n{current_text}",
-                        "metadata": {
-                            "source": file_path.name,
-                            "section": heading,
-                        },
-                    })
-                    chunk_index += 1
-                current_text = para
-
-        if current_text:
+        for piece in split_body_with_overlap(body, max_chars=max_chars, overlap_chars=overlap_chars):
             chunks.append({
                 "chunk_id": f"{file_path.stem}_{chunk_index}",
-                "text": f"{heading}\n{current_text}",
+                "text": f"{heading}\n{piece}",
                 "metadata": {
                     "source": file_path.name,
                     "section": heading,
@@ -59,11 +122,76 @@ def chunk_markdown(file_path: Path, max_chars: int = 800) -> list[dict]:
     return chunks
 
 
-def load_and_chunk_folder(data_dir: str = "data") -> list[dict]:
-    # data/ klasöründeki tüm .md dosyalarını gez ve parçala
+def chunk_text(
+    file_path: Path,
+    max_chars: int = 800,
+    overlap_chars: int = 120,
+) -> list[dict]:
+    text = file_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+
+    chunks = []
+    for idx, piece in enumerate(split_body_with_overlap(text, max_chars=max_chars, overlap_chars=overlap_chars)):
+        chunks.append({
+            "chunk_id": f"{file_path.stem}_{idx}",
+            "text": piece,
+            "metadata": {
+                "source": file_path.name,
+                "section": f"Bölüm {idx + 1}",
+            },
+        })
+    return chunks
+
+
+def chunk_pdf(
+    file_path: Path,
+    max_chars: int = 800,
+    overlap_chars: int = 120,
+) -> list[dict]:
+    from pypdf import PdfReader
+
+    reader = PdfReader(str(file_path))
+    chunks = []
+    chunk_index = 0
+
+    for page_num, page in enumerate(reader.pages, start=1):
+        page_text = (page.extract_text() or "").strip()
+        if not page_text:
+            continue
+
+        section_name = f"Sayfa {page_num}"
+        for piece in split_body_with_overlap(page_text, max_chars=max_chars, overlap_chars=overlap_chars):
+            chunks.append({
+                "chunk_id": f"{file_path.stem}_{chunk_index}",
+                "text": f"{section_name}\n{piece}",
+                "metadata": {
+                    "source": file_path.name,
+                    "section": section_name,
+                },
+            })
+            chunk_index += 1
+
+    return chunks
+
+
+def load_and_chunk_folder(
+    data_dir: str = "data",
+    max_chars: int = 800,
+    overlap_chars: int = 120,
+) -> list[dict]:
+    # data/ klasöründeki tüm .md, .txt ve .pdf dosyalarını gez ve parçala
     all_chunks = []
-    for md_file in sorted(Path(data_dir).glob("*.md")):
-        all_chunks.extend(chunk_markdown(md_file))
+    for file_path in sorted(Path(data_dir).iterdir()):
+        if not file_path.is_file():
+            continue
+        suffix = file_path.suffix.lower()
+        if suffix == ".md":
+            all_chunks.extend(chunk_markdown(file_path, max_chars=max_chars, overlap_chars=overlap_chars))
+        elif suffix == ".txt":
+            all_chunks.extend(chunk_text(file_path, max_chars=max_chars, overlap_chars=overlap_chars))
+        elif suffix == ".pdf":
+            all_chunks.extend(chunk_pdf(file_path, max_chars=max_chars, overlap_chars=overlap_chars))
     return all_chunks
 
 

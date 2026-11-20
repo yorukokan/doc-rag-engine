@@ -3,3 +3,4 @@ fastembed
 rank-bm25
 openai
 python-dotenv
+pypdf

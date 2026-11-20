@@ -1,0 +1,7 @@
+Git, yazılım projelerinde yapılan değişiklikleri adım adım takip etmeyi sağlayan dağıtık bir versiyon kontrol sistemidir. Her geliştirici kendi bilgisayarında projenin tam geçmişine sahip olur ve internet bağlantısı olmadan bile commit atabilir.
+
+Git akışında üç temel alan vardır: çalışma dizini (working directory), hazırlık alanı (staging area) ve yerel depo (local repository). Bir dosyada değişiklik yaptıktan sonra git add komutu ile dosyayı hazırlık alanına alırsın, ardından git commit komutu ile bu değişikliği kalıcı bir kayıt olarak yerel depoya işlersin.
+
+Branch (dal) yapısı, ana kodu (main) bozmadan yeni özellikler geliştirmeyi mümkün kılar. Örneğin yeni bir arama özelliği denerken ayrı bir dal açılır, testler geçtikten sonra pull request veya merge işlemi ile ana dala birleştirilir. Bu sayede ekip içi çakışmalar en aza iner.
+
+Uzak depoya (örneğin GitHub) değişiklikleri göndermek için git push, başkalarının yaptığı güncellemeleri kendi bilgisayarına çekmek için ise git pull komutu kullanılır. Hassas şifrelerin ve API anahtarlarının tutulduğu .env gibi dosyalar ise mutlaka .gitignore dosyasına eklenerek depodan hariç tutulmalıdır.

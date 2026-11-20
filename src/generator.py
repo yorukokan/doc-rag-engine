@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 from openai import OpenAI
 from retriever import search
@@ -13,9 +14,11 @@ client = OpenAI(
 MODEL_NAME = os.getenv("LLM_MODEL_NAME")
 
 
-def ask_rag(question: str, top_k: int = 3) -> str:
-    # 1. Önce Qdrant'tan en alakalı bilgi kartlarını bul
+def ask_rag_with_trace(question: str, top_k: int = 3) -> dict:
+    # 1. Önce Qdrant + BM25 ile en alakalı bilgi kartlarını bul ve süresini ölç
+    t0 = time.perf_counter()
     retrieved_chunks = search(question, top_k=top_k)
+    retrieval_ms = round((time.perf_counter() - t0) * 1000, 1)
 
     # 2. Bulunan kartları LLM'in okuyabileceği düzenli bir metne çevir
     context_parts = []
@@ -41,7 +44,8 @@ DOKÜMANLAR:
 SORU: {question}
 """
 
-    # 4. Şirket LLM'ine isteği at
+    # 4. LLM'e isteği at ve yanıt süresini ölç
+    t1 = time.perf_counter()
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
@@ -50,8 +54,18 @@ SORU: {question}
         ],
         temperature=0.1,  # 0.1 = Yaratıcılığı kıs, sadece metne sadık kal
     )
+    generation_ms = round((time.perf_counter() - t1) * 1000, 1)
 
-    return response.choices[0].message.content
+    return {
+        "answer": response.choices[0].message.content,
+        "chunks": retrieved_chunks,
+        "retrieval_ms": retrieval_ms,
+        "generation_ms": generation_ms,
+    }
+
+
+def ask_rag(question: str, top_k: int = 3) -> str:
+    return ask_rag_with_trace(question, top_k=top_k)["answer"]
 
 
 if __name__ == "__main__":

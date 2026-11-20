@@ -45,17 +45,22 @@ def search(query: str, top_k: int = 2, rrf_k: int = 10) -> list[dict]:
     # Her kartı ID'sine göre sakla
     docs_by_id = {p.payload["chunk_id"]: p.payload for p in all_points}
 
-    # --- Vektör Sıralaması (1, 2, 3...) ---
+    # --- Vektör Sıralaması ve Ham Skorları (1, 2, 3...) ---
     dense_ranks = {
         hit.payload["chunk_id"]: rank
         for rank, hit in enumerate(dense_response.points, start=1)
     }
+    dense_score_map = {
+        hit.payload["chunk_id"]: hit.score
+        for hit in dense_response.points
+    }
 
-    # --- BM25 Sıralaması (Anahtar Kelime) ---
+    # --- BM25 Sıralaması ve Ham Skorları (Anahtar Kelime) ---
     chunk_ids = [p.payload["chunk_id"] for p in all_points]
     tokenized_corpus = [tokenize(p.payload["text"]) for p in all_points]
     bm25 = BM25Okapi(tokenized_corpus)
     bm25_scores = bm25.get_scores(tokenize(query))
+    bm25_score_map = dict(zip(chunk_ids, bm25_scores))
 
     bm25_sorted = sorted(
         zip(chunk_ids, bm25_scores),
@@ -81,6 +86,10 @@ def search(query: str, top_k: int = 2, rrf_k: int = 10) -> list[dict]:
         payload = docs_by_id[cid]
         results.append({
             "score": round(rrf_scores[cid], 4),
+            "dense_rank": dense_ranks.get(cid),
+            "dense_score": round(float(dense_score_map.get(cid, 0.0)), 4),
+            "bm25_rank": bm25_ranks.get(cid),
+            "bm25_score": round(float(bm25_score_map.get(cid, 0.0)), 4),
             "chunk_id": cid,
             "text": payload["text"],
             "source": payload["source"],

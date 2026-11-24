@@ -1,8 +1,8 @@
 <div align="center">
 
-# Doc-RAG Engine — Hybrid Search & Evaluation Pipeline
+# Doc-RAG Engine — Two-Stage Hybrid Search, Reranking & Evaluation Pipeline
 
-**Framework Bağımsız · Hibrit Arama (Dense + BM25 RRF) · Otomatik Halüsinasyon & Citation Doğrulama**
+**Framework Bağımsız · Hibrit Arama (Dense + BM25 RRF) · Multilingual Cross-Encoder Reranker · LLM-as-a-Judge & Observability**
 
 [![GitHub](https://img.shields.io/badge/GitHub-yorukokan-181717?style=for-the-badge&logo=github)](https://github.com/yorukokan)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Okan_Yörük-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/okanyoruk)
@@ -14,47 +14,57 @@
 
 ## 📌 Mimari Genel Bakış
 
-Bu proje; LangChain veya LlamaIndex gibi soyutlama katmanlarına bağımlı kalmadan **saf Python** ile sıfırdan geliştirilmiş, üretim (production) standartlarında ölçülebilir bir **Retrieval-Augmented Generation (RAG)** motorudur. Teknik Markdown dokümanlarını anlamsal bütünlüğü koruyarak parçalar, yerel vektör veritabanında indeksler, hibrit arama ile en alakalı bağlamı getirir ve zorunlu kaynak gösterimi (**Citation**) ile yanıt üretir.
+Bu proje; LangChain veya LlamaIndex gibi soyutlama katmanlarına bağımlı kalmadan **saf Python** ile sıfırdan geliştirilmiş, üretim (production) standartlarında ölçülebilir bir **Retrieval-Augmented Generation (RAG)** motorudur. Markdown, düz metin ve PDF dokümanlarını anlamsal bütünlüğü koruyarak (**Chunk Overlap**) parçalar, yerel vektör veritabanında indeksler, iki aşamalı arama (**Hybrid Search + Cross-Encoder Reranking**) ile en alakalı bağlamı getirir ve zorunlu kaynak gösterimi (**Citation**) ile yanıt üretir.
 
 ```text
-Markdown Dokümanları (data/ — 4 Dosya / 16 Chunk)
+Dokümanlar (data/ — .md, .txt, .pdf)
         │
         ▼
-[1. Chunker]   ──► Başlık bazlı (#, ##, ###) parçalama + metadata (source, section)
+[1. Chunker]   ──► Başlık/Paragraf bazlı parçalama + Chunk Overlap + Metadata (source, section)
         │
         ▼
 [2. Indexer]   ──► FastEmbed (384-dim Multilingual) ──► Qdrant (Local Disk Storage)
         │
         ▼
-[3. Retriever] ──► Dense Vector Search + BM25Okapi ──► RRF (Reciprocal Rank Fusion)
+[3. Retriever] ──► Stage 1: Dense Vector Search + BM25Okapi ──► RRF (Reciprocal Rank Fusion)
         │
         ▼
-[4. Generator] ──► OpenAI-Uyumlu LLM API (temp=0.1) ──► Zorunlu [dosya - Bölüm] Citation
+[4. Reranker]  ──► Stage 2: Multilingual Cross-Encoder (bge-reranker-v2-m3-int8) ──► Hassas Sıralama
         │
         ▼
-[5. Evaluator] ──► 20 Soruluk Otomatik Test Seti (Recall@2, Citation, Halüsinasyon Reddi)
+[5. Generator] ──► OpenAI-Uyumlu LLM API (temp=0.1) ──► Zorunlu [dosya - Bölüm] Citation + Süre Ölçümü
+        │
+        ▼
+[6. CLI / Eval]──► Etkileşimli Röntgen CLI (--debug, --rerank) & 20 Soruluk LLM-as-a-Judge Karnesi
 ```
 
 ### ✨ Temel Mühendislik Özellikleri
 
-- **Yapısal Başlık Parçalama (`src/chunker.py`)**: Sabit karakter kesimi yerine Regex tabanlı başlık ayrıştırma (`#`, `##`, `###`) ve 800 karakter üst limitli paragraf koruma mantığı kullanır. Her parçaya kaynak dosya (`source`) ve alt başlık (`section`) metadatası gömülür.
+- **Çoklu Format ve Chunk Overlap (`src/chunker.py`)**: `.md`, `.txt` ve `.pdf` (`pypdf`) dosyalarını destekler. Başlık (`#`, `##`, `###`) ve paragraf sınırlarını koruyarak 800 karakterlik parçalara ayırır; uzun metinlerde bağlam kopmasını önlemek için **120 karakterlik Chunk Overlap** uygular.
 - **Sıfır Docker Bağımlılıklı Yerel İndeksleme (`src/indexer.py`)**: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` modeli (FastEmbed) ile üretilen 384 boyutlu vektörler, yerel disk tabanlı **Qdrant** üzerinde Cosine benzerlik metriğiyle saklanır.
-- **Hibrit Arama ve RRF Sıralama (`src/retriever.py`)**: Yalnızca anlamsal vektör aramasının (Dense) spesifik teknik terimleri kaçırma riskini ortadan kaldırmak için **BM25Okapi** anahtar kelime skoru ile vektör sıralaması **Reciprocal Rank Fusion (RRF)** formülüyle birleştirilir.
-- **Halüsinasyon Koruması ve Zorunlu Citation (`src/generator.py`)**: OpenAI-uyumlu API arayüzü üzerinden düşük sıcaklık (`temperature=0.1`) ve katı sistem kurallarıyla çalışır. Model yalnızca getirilen parçalara dayanır, her bilginin sonuna `[dosya_adi - Bölüm]` kaynağını ekler ve doküman dışı soruları reddeder.
+- **İki Aşamalı Hibrit Arama + Reranking (`src/retriever.py`, `src/reranker.py`)**:
+  - **1. Aşama (Hızlı Eleme):** Anlamsal vektör araması (Dense) ile anahtar kelime araması (**BM25Okapi**) sonuçları **Reciprocal Rank Fusion (RRF)** formülüyle birleştirilir.
+  - **2. Aşama (Hassas Sıralama):** Aday kartlar Türkçe destekli yerel Cross-Encoder (`BAAI/bge-reranker-v2-m3-int8`) ile soruyla yan yana okunarak yeniden puanlanır.
+- **Halüsinasyon Koruması, Citation ve Süre İzleme (`src/generator.py`)**: OpenAI-uyumlu API üzerinden düşük sıcaklık (`temperature=0.1`) ve katı sistem kurallarıyla çalışır; her bilginin sonuna `[dosya_adi - Bölüm]` kaynağı ekler, doküman dışı soruları reddeder ve arama/üretim sürelerini (`ms`) ölçer.
+- **Etkileşimli Röntgen CLI (`src/cli.py`)**: `--debug`, `--search-only` ve `--rerank` modlarıyla her soruda Vektör (cosine), BM25, RRF, Rerank skorlarını ve gecikme sürelerini canlı gösterir.
+- **Otomatik Değerlendirme ve LLM-as-a-Judge (`eval/run_eval.py`)**: `Recall@1`, `Recall@2`, Citation uyumu, tuzak soru reddi, ortalama latency ve hakem LLM üzerinden **Sadakat (Faithfulness)** & **Cevap Alakası (Relevance)** metriklerini ölçer.
 
 ---
 
 ## 📊 Değerlendirme & Metrik Sonuçları (Evaluation)
 
-Sistemin arama ve üretim kalitesi `eval/run_eval.py` ile otomatik olarak ölçülmüştür. İlk aşamada (V1) yalnızca yoğun vektör araması kullanılırken kaçırılan teknik kavramlar (ör. *TTL önbellek süresi*), **BM25 + RRF Hibrit Arama (V2)** mimarisine geçildikten sonra tamamen yakalanmıştır.
+Sistemin arama ve üretim kalitesi `eval/run_eval.py --rerank --judge` ile otomatik olarak ölçülmüştür.
 
-**Test Kapsamı:** `4 Teknik Doküman` · `16 Bilgi Kartı (Chunk)` · `20 Soru (16 Doküman İçi + 4 Tuzak Soru)`
+**Test Kapsamı:** `20 Soru (16 Doküman İçi + 4 Tuzak Soru)`
 
-| Değerlendirme Metriği | V1 (Sadece Vektör) | V2 (Hybrid: Vektör + BM25 RRF) | Durum |
-| :--- | :---: | :---: | :---: |
-| **Recall@2 (Arama Başarısı)** | %75.0 | **%100.0 (16/16)** | ✅ Tam Başarı |
-| **Citation (Kaynak Gösterme Uyumu)** | %100.0 | **%100.0 (16/16)** | ✅ Tam Başarı |
-| **Tuzak Soru (Halüsinasyon Reddi)** | %100.0 | **%100.0 (4/4)** | ✅ Sıfır Halüsinasyon |
+| Değerlendirme Metriği | V1 (Sadece Vektör) | V2 (Hybrid: Vektör + BM25 RRF) | V3 (Hybrid + Cross-Encoder Rerank) | Durum |
+| :--- | :---: | :---: | :---: | :---: |
+| **Recall@1 (Tam 1. Sırada Bulma)** | — | — | **%100.0 (16/16)** | ✅ Tam İsabet |
+| **Recall@2 (İlk 2'de Bulma)** | %75.0 | %100.0 (16/16) | **%100.0 (16/16)** | ✅ Tam Başarı |
+| **Citation (Kaynak Gösterme Uyumu)** | %100.0 | %100.0 (16/16) | **%100.0 (16/16)** | ✅ Tam Başarı |
+| **Tuzak Soru (Halüsinasyon Reddi)** | %100.0 | %100.0 (4/4) | **%100.0 (4/4)** | ✅ Sıfır Halüsinasyon |
+| **LLM-as-a-Judge: Sadakat (Faithfulness)** | — | — | **5.00 / 5.00** | ✅ Tam Sadakat |
+| **LLM-as-a-Judge: Cevap Alakası** | — | — | **5.00 / 5.00** | ✅ Tam Alaka |
 
 ---
 
@@ -62,15 +72,17 @@ Sistemin arama ve üretim kalitesi `eval/run_eval.py` ile otomatik olarak ölç�
 
 ```text
 doc-rag-engine/
-├── data/               # Teknik Markdown dokümanları (DNS, Linux, Ağ Güvenliği, HTTP/API)
+├── data/               # Teknik dokümanlar (.md, .txt, .pdf)
 ├── src/
-│   ├── chunker.py      # Başlık bazlı parçalama ve metadata çıkarma motoru
+│   ├── chunker.py      # Çoklu format (.md/.txt/.pdf) + Chunk Overlap motoru
 │   ├── indexer.py      # FastEmbed vektörleştirme ve Qdrant yerel indeksleme
 │   ├── retriever.py    # Dense Vector + BM25 + RRF Hibrit Arama motoru
-│   └── generator.py    # OpenAI-uyumlu LLM ve zorunlu Citation katmanı
+│   ├── reranker.py     # Multilingual Cross-Encoder 2. aşama sıralayıcı
+│   ├── generator.py    # OpenAI-uyumlu LLM, Citation ve süre ölçüm katmanı
+│   └── cli.py          # Etkileşimli sohbet ve Observability (Röntgen) CLI
 ├── eval/
-│   ├── dataset.json    # 20 soruluk test veri seti (tuzak sorular dahil)
-│   └── run_eval.py     # Otomatik metrik hesaplama ve raporlama scripti
+│   ├── dataset.json    # 20 soruluk test veri seti (16 normal + 4 tuzak soru)
+│   └── run_eval.py     # Recall@1/2, Citation, Latency ve LLM-as-a-Judge scripti
 ├── .env.example        # Ortam değişkenleri şablonu
 ├── .gitignore
 └── requirements.txt
@@ -83,7 +95,7 @@ doc-rag-engine/
 1. Depoyu klonlayın ve izole Python sanal ortamını aktif edin:
 
 ```bash
-git clone [https://github.com/yorukokan/doc-rag-engine.git](https://github.com/yorukokan/doc-rag-engine.git)
+git clone https://github.com/yorukokan/doc-rag-engine.git
 cd doc-rag-engine
 python3 -m venv .venv
 source .venv/bin/activate
@@ -97,10 +109,11 @@ cp .env.example .env
 # LLM_BASE_URL, LLM_API_KEY ve LLM_MODEL_NAME değerlerini girin
 ```
 
-3. Dokümanları indeksleyin, örnek sorgu çalıştırın ve 20 soruluk değerlendirme testini koşturun:
+3. Dokümanları indeksleyin, etkileşimli CLI ile röntgen çekin ve değerlendirme testini çalıştırın:
 
 ```bash
-python3 src/indexer.py      # Dokümanları vektörleştirip Qdrant'a kaydeder
-python3 src/generator.py    # Örnek soruyu kaynak göstererek yanıtlar
-python3 eval/run_eval.py    # 20 soruluk sınavı çalıştırıp sistem karnesini çıkarır
+python3 src/indexer.py                         # Dokümanları vektörleştirip Qdrant'a kaydeder
+python3 src/cli.py --debug --rerank            # Etkileşimli sohbet + Röntgen + Reranker
+python3 src/cli.py --search-only --rerank      # LLM çağırmadan sadece arama röntgeni
+python3 eval/run_eval.py --rerank --judge      # 20 soruluk tam değerlendirme ve hakem karnesi
 ```

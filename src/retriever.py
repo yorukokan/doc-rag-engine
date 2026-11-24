@@ -21,7 +21,13 @@ def tokenize(text: str) -> list[str]:
     return re.findall(r"\w+", text.lower())
 
 
-def search(query: str, top_k: int = 2, rrf_k: int = 10) -> list[dict]:
+def search(
+    query: str,
+    top_k: int = 2,
+    rrf_k: int = 10,
+    use_rerank: bool = False,
+    candidate_k: int = 6,
+) -> list[dict]:
     embedder = get_embedder()
     query_vector = list(embedder.embed([query]))[0].tolist()
 
@@ -78,8 +84,9 @@ def search(query: str, top_k: int = 2, rrf_k: int = 10) -> list[dict]:
         b_rank = bm25_ranks.get(cid, len(docs_by_id) + 1)
         rrf_scores[cid] = (1 / (rrf_k + d_rank)) + (1 / (rrf_k + b_rank))
 
-    # En yüksek RRF skoruna göre ilk top_k sonucu seç
-    top_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]
+    # En yüksek RRF skoruna göre adayları seç (Rerank açıksa önce daha geniş havuz al)
+    fetch_k = max(top_k, candidate_k) if use_rerank else top_k
+    top_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:fetch_k]
 
     results = []
     for cid in top_ids:
@@ -95,6 +102,11 @@ def search(query: str, top_k: int = 2, rrf_k: int = 10) -> list[dict]:
             "source": payload["source"],
             "section": payload["section"],
         })
+
+    if use_rerank:
+        from reranker import rerank_chunks
+        return rerank_chunks(query, results, top_k=top_k)
+
     return results
 
 

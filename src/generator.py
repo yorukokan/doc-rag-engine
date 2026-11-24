@@ -14,10 +14,10 @@ client = OpenAI(
 MODEL_NAME = os.getenv("LLM_MODEL_NAME")
 
 
-def ask_rag_with_trace(question: str, top_k: int = 3) -> dict:
-    # 1. Önce Qdrant + BM25 ile en alakalı bilgi kartlarını bul ve süresini ölç
+def ask_rag_with_trace(question: str, top_k: int = 3, use_rerank: bool = False) -> dict:
+    # 1. Önce Qdrant + BM25 (ve isteğe bağlı Reranker) ile en alakalı kartları bul ve süresini ölç
     t0 = time.perf_counter()
-    retrieved_chunks = search(question, top_k=top_k)
+    retrieved_chunks = search(question, top_k=top_k, use_rerank=use_rerank)
     retrieval_ms = round((time.perf_counter() - t0) * 1000, 1)
 
     # 2. Bulunan kartları LLM'in okuyabileceği düzenli bir metne çevir
@@ -64,8 +64,8 @@ SORU: {question}
     }
 
 
-def ask_rag(question: str, top_k: int = 3) -> str:
-    return ask_rag_with_trace(question, top_k=top_k)["answer"]
+def ask_rag(question: str, top_k: int = 3, use_rerank: bool = False) -> str:
+    return ask_rag_with_trace(question, top_k=top_k, use_rerank=use_rerank)["answer"]
 
 
 if __name__ == "__main__":

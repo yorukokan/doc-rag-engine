@@ -16,7 +16,7 @@ from collections import OrderedDict
 from collections.abc import Iterator
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -25,6 +25,13 @@ from guardrail import (
     DEFAULT_MIN_BM25_SCORE,
     DEFAULT_MIN_DENSE_SCORE,
     DEFAULT_MIN_RERANK_SCORE,
+)
+from indexer import (
+    MAX_UPLOAD_SIZE_BYTES,
+    delete_document as indexer_delete_document,
+    list_documents as indexer_list_documents,
+    save_and_index_document,
+    validate_filename,
 )
 from llm_client import MODEL_NAME
 from memory import ConversationMemory
@@ -219,6 +226,33 @@ class SessionResponse(BaseModel):
 
 class SessionDeleteResponse(BaseModel):
     session_id: str
+    deleted: bool
+
+
+class DocumentInfo(BaseModel):
+    filename: str
+    size_bytes: int
+    extension: str
+    chunk_count: int
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentInfo]
+    total_documents: int
+    total_chunks: int
+
+
+class DocumentUploadResponse(BaseModel):
+    filename: str
+    size_bytes: int
+    chunk_count: int
+    overwritten: bool
+    message: str
+
+
+class DocumentDeleteResponse(BaseModel):
+    filename: str
+    deleted_chunks: int
     deleted: bool
 
 
@@ -432,3 +466,105 @@ def delete_session(session_id: str) -> SessionDeleteResponse:
     if not deleted:
         raise HTTPException(status_code=404, detail="Oturum bulunamadı.")
     return SessionDeleteResponse(session_id=session_id, deleted=True)
+
+
+@app.get("/documents", response_model=DocumentListResponse)
+def get_documents() -> DocumentListResponse:
+    try:
+        raw_docs = indexer_list_documents()
+    except Exception:
+        logger.exception("GET /documents sırasında beklenmeyen hata oluştu")
+        raise HTTPException(
+            status_code=503,
+            detail="Doküman listesi şu anda alınamıyor.",
+        )
+
+    documents = [DocumentInfo(**doc) for doc in raw_docs]
+    total_chunks = sum(doc.chunk_count for doc in documents)
+    return DocumentListResponse(
+        documents=documents,
+        total_documents=len(documents),
+        total_chunks=total_chunks,
+    )
+
+
+@app.post("/documents", response_model=DocumentUploadResponse, status_code=201)
+def upload_document(
+    file: UploadFile = File(...),
+    overwrite: bool = Query(False),
+) -> DocumentUploadResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Dosya adı boş olamaz.")
+
+    try:
+        safe_name = validate_filename(file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    chunks_buf = bytearray()
+    max_read = MAX_UPLOAD_SIZE_BYTES + 1
+    try:
+        while True:
+            piece = file.file.read(65536)
+            if not piece:
+                break
+            chunks_buf.extend(piece)
+            if len(chunks_buf) >= max_read:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Dosya boyutu en fazla {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)} MB olabilir.",
+                )
+    finally:
+        file.file.close()
+
+    content = bytes(chunks_buf)
+
+    try:
+        result = save_and_index_document(
+            filename=safe_name,
+            content=content,
+            overwrite=overwrite,
+        )
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except OverflowError as exc:
+        raise HTTPException(status_code=413, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("POST /documents sırasında beklenmeyen hata oluştu")
+        raise HTTPException(
+            status_code=503,
+            detail="Doküman indekslenirken bir sunucu hatası oluştu.",
+        )
+
+    action_text = "güncellendi" if result["overwritten"] else "yüklendi"
+    message = (
+        f"'{result['filename']}' {action_text} ve "
+        f"{result['chunk_count']} parça olarak indekslendi."
+    )
+    return DocumentUploadResponse(
+        filename=result["filename"],
+        size_bytes=result["size_bytes"],
+        chunk_count=result["chunk_count"],
+        overwritten=result["overwritten"],
+        message=message,
+    )
+
+
+@app.delete("/documents/{filename:path}", response_model=DocumentDeleteResponse)
+def remove_document(filename: str) -> DocumentDeleteResponse:
+    try:
+        result = indexer_delete_document(filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception:
+        logger.exception("DELETE /documents sırasında beklenmeyen hata oluştu")
+        raise HTTPException(
+            status_code=503,
+            detail="Doküman silinirken bir sunucu hatası oluştu.",
+        )
+
+    return DocumentDeleteResponse(**result)

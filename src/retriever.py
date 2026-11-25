@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "dokumanlar"
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+QDRANT_PATH = "qdrant_data"
 
 _embedder = None
 _embedder_lock = threading.Lock()
@@ -28,7 +29,7 @@ def get_qdrant_health() -> dict:
     with _qdrant_lock:
         client = None
         try:
-            client = QdrantClient(path="qdrant_data")
+            client = QdrantClient(path=QDRANT_PATH)
             collection_exists = bool(client.collection_exists(COLLECTION_NAME))
             points_count = None
             if collection_exists:
@@ -53,6 +54,28 @@ def get_qdrant_health() -> dict:
                 client.close()
 
 
+def scroll_all_points(
+    client,
+    collection_name: str = COLLECTION_NAME,
+    batch_size: int = 1000,
+) -> list:
+    """Koleksiyondaki tüm point'leri sayfalama ile eksiksiz çeker."""
+    all_points = []
+    offset = None
+    while True:
+        batch, next_offset = client.scroll(
+            collection_name=collection_name,
+            limit=batch_size,
+            offset=offset,
+            with_payload=True,
+        )
+        all_points.extend(batch)
+        if next_offset is None:
+            break
+        offset = next_offset
+    return all_points
+
+
 def tokenize(text: str) -> list[str]:
     # Noktalama işaretlerini at, küçük harfe çevirip kelimelere ayır
     return re.findall(r"\w+", text.lower())
@@ -69,8 +92,10 @@ def search(
     query_vector = list(embedder.embed([query]))[0].tolist()
 
     with _qdrant_lock:
-        client = QdrantClient(path="qdrant_data")
+        client = QdrantClient(path=QDRANT_PATH)
         try:
+            if not client.collection_exists(COLLECTION_NAME):
+                return []
             # 1. Vektör Araması (Anlamsal)
             dense_response = client.query_points(
                 collection_name=COLLECTION_NAME,
@@ -78,13 +103,12 @@ def search(
                 limit=20,
             )
             # 2. BM25 için koleksiyondaki tüm kartları çek
-            all_points, _ = client.scroll(
-                collection_name=COLLECTION_NAME,
-                limit=1000,
-                with_payload=True,
-            )
+            all_points = scroll_all_points(client, COLLECTION_NAME)
         finally:
             client.close()
+
+    if not all_points:
+        return []
 
     # Her kartı ID'sine göre sakla
     docs_by_id = {p.payload["chunk_id"]: p.payload for p in all_points}

@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 
@@ -171,6 +172,34 @@ def chunk_pdf(
                 },
             })
             chunk_index += 1
+
+    return chunks
+
+
+def chunk_file(
+    file_path: str | Path,
+    source_name: str | None = None,
+    max_chars: int = 800,
+    overlap_chars: int = 120,
+) -> list[dict]:
+    """Tek bir .md, .txt veya .pdf dosyasını uzantısına göre parçalar."""
+    ext = os.path.splitext(source_name or str(file_path))[1].lower()
+    path = Path(file_path)
+
+    if ext == ".md":
+        chunks = chunk_markdown(path, max_chars=max_chars, overlap_chars=overlap_chars)
+    elif ext == ".txt":
+        chunks = chunk_text(path, max_chars=max_chars, overlap_chars=overlap_chars)
+    elif ext == ".pdf":
+        chunks = chunk_pdf(path, max_chars=max_chars, overlap_chars=overlap_chars)
+    else:
+        raise ValueError(f"Desteklenmeyen dosya uzantısı: {ext}")
+
+    if source_name:
+        stem = Path(source_name).stem
+        for idx, chunk in enumerate(chunks):
+            chunk["chunk_id"] = f"{stem}_{idx}"
+            chunk["metadata"]["source"] = source_name
 
     return chunks
 

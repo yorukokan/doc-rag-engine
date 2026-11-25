@@ -9,6 +9,7 @@ from urllib.parse import quote
 import httpx
 
 DEFAULT_API_URL = "http://127.0.0.1:8000"
+DEFAULT_API_BASE_URL = DEFAULT_API_URL
 
 
 class ApiClientError(Exception):
@@ -56,13 +57,23 @@ def _send_request(
     *,
     timeout: float,
     json_payload: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+    files: dict[str, Any] | None = None,
     client: httpx.Client | None = None,
 ) -> httpx.Response:
+    request_kwargs: dict[str, Any] = {}
+    if json_payload is not None:
+        request_kwargs["json"] = json_payload
+    if params is not None:
+        request_kwargs["params"] = params
+    if files is not None:
+        request_kwargs["files"] = files
+
     try:
         if client is not None:
-            return client.request(method, url, json=json_payload, timeout=timeout)
+            return client.request(method, url, timeout=timeout, **request_kwargs)
         with httpx.Client(timeout=timeout) as http_client:
-            return http_client.request(method, url, json=json_payload)
+            return http_client.request(method, url, **request_kwargs)
     except httpx.ConnectError as exc:
         raise ApiClientError(
             "FastAPI sunucusuna bağlanılamadı. Sunucunun çalıştığından emin olun."
@@ -349,3 +360,45 @@ def delete_session(
         _extract_error_detail(response),
         status_code=response.status_code,
     )
+
+
+def list_documents(
+    base_url: str = DEFAULT_API_BASE_URL,
+    timeout: float = 15.0,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    url = f"{_normalize_base_url(base_url)}/documents"
+    response = _send_request("GET", url, timeout=timeout, client=client)
+    return _parse_json_object(response)
+
+
+def upload_document(
+    filename: str,
+    content: bytes,
+    overwrite: bool = False,
+    base_url: str = DEFAULT_API_BASE_URL,
+    timeout: float = 120.0,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    url = f"{_normalize_base_url(base_url)}/documents"
+    response = _send_request(
+        "POST",
+        url,
+        timeout=timeout,
+        params={"overwrite": str(overwrite).lower()},
+        files={"file": (filename, content)},
+        client=client,
+    )
+    return _parse_json_object(response)
+
+
+def delete_document(
+    filename: str,
+    base_url: str = DEFAULT_API_BASE_URL,
+    timeout: float = 30.0,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    safe_filename = quote(filename, safe="")
+    url = f"{_normalize_base_url(base_url)}/documents/{safe_filename}"
+    response = _send_request("DELETE", url, timeout=timeout, client=client)
+    return _parse_json_object(response)

@@ -10,14 +10,23 @@ from typing import Any
 
 import streamlit as st
 
+import ui_client
 from ui_client import (
     ApiClientError,
-    DEFAULT_API_URL,
     ask_question,
     ask_question_stream,
     check_health,
+    delete_document,
     delete_session,
+    list_documents,
     search_docs,
+    upload_document,
+)
+
+DEFAULT_API_URL: str = getattr(
+    ui_client,
+    "DEFAULT_API_BASE_URL",
+    getattr(ui_client, "DEFAULT_API_URL", "http://127.0.0.1:8000"),
 )
 
 st.set_page_config(
@@ -272,6 +281,49 @@ def _inject_styles() -> None:
             border: 1px solid rgba(128, 128, 128, 0.2);
             word-break: break-word;
         }
+        .doc-summary-bar {
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 0.38rem 0.6rem;
+            border-radius: 0.45rem;
+            background: rgba(59, 130, 246, 0.09);
+            border: 1px solid rgba(59, 130, 246, 0.24);
+            margin: 0.25rem 0 0.55rem 0;
+        }
+        .doc-item-card {
+            padding: 0.42rem 0.58rem;
+            border-radius: 0.45rem;
+            border: 1px solid rgba(128, 128, 128, 0.2);
+            background: rgba(128, 128, 128, 0.05);
+            margin-bottom: 0.35rem;
+        }
+        .doc-item-name {
+            font-size: 0.82rem;
+            font-weight: 600;
+            line-height: 1.3;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            margin-bottom: 0.18rem;
+        }
+        .doc-item-meta {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            font-size: 0.74rem;
+            opacity: 0.8;
+            line-height: 1.25;
+        }
+        .doc-ext-badge {
+            display: inline-block;
+            padding: 0.05rem 0.34rem;
+            border-radius: 0.28rem;
+            font-size: 0.68rem;
+            font-weight: 700;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            background: rgba(128, 128, 128, 0.15);
+            border: 1px solid rgba(128, 128, 128, 0.25);
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -289,6 +341,11 @@ def _init_session_state() -> None:
         "health_checked": False,
         "pending_prompt": None,
         "clear_notice": None,
+        "docs_cache": None,
+        "docs_error": None,
+        "docs_loaded": False,
+        "docs_url": None,
+        "doc_feedback": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -307,6 +364,37 @@ def _refresh_health(base_url: str) -> None:
         st.session_state.health_error = f"Beklenmeyen bağlantı hatası: {exc}"
     st.session_state.health_checked = True
     st.session_state.last_checked_url = base_url
+
+
+def _invalidate_docs_cache() -> None:
+    st.session_state.docs_cache = None
+    st.session_state.docs_error = None
+    st.session_state.docs_loaded = False
+
+
+def _refresh_documents(base_url: str) -> None:
+    try:
+        st.session_state.docs_cache = list_documents(base_url=base_url)
+        st.session_state.docs_error = None
+    except ApiClientError as exc:
+        st.session_state.docs_cache = None
+        st.session_state.docs_error = str(exc)
+    except Exception as exc:
+        st.session_state.docs_cache = None
+        st.session_state.docs_error = f"Doküman listesi alınamadı: {exc}"
+    st.session_state.docs_loaded = True
+    st.session_state.docs_url = base_url
+
+
+def _format_size_kb(size_bytes: Any) -> str:
+    try:
+        num = max(int(size_bytes), 0)
+    except (TypeError, ValueError):
+        return "0.0 KB"
+    kb = num / 1024.0
+    if num > 0 and kb < 0.1:
+        return "0.1 KB"
+    return f"{kb:.1f} KB"
 
 
 def _shorten_session_id(session_id: str | None) -> str:
@@ -539,6 +627,200 @@ def _render_message(msg: dict[str, Any]) -> None:
         _render_chat_observability(msg)
 
 
+def _render_knowledge_base(api_url: str) -> None:
+    feedback = st.session_state.get("doc_feedback")
+    has_feedback = bool(feedback)
+
+    with st.expander("📚 Bilgi Bankası (Dokümanlar)", expanded=has_feedback):
+        if feedback:
+            level, message = feedback
+            if level == "success":
+                st.success(message)
+            elif level == "warning":
+                st.warning(message)
+            elif level == "error":
+                st.error(message)
+            else:
+                st.info(message)
+            st.session_state["doc_feedback"] = None
+
+        # A. Doküman Yükleme
+        uploaded = st.file_uploader(
+            "Yeni doküman yükle (.md, .txt, .pdf)",
+            type=["md", "txt", "pdf"],
+            key="doc_uploader",
+        )
+        overwrite = st.checkbox(
+            "Aynı isimde varsa üzerine yaz",
+            value=False,
+            key="doc_overwrite",
+        )
+        if st.button(
+            "📤 Yükle ve İndeksle",
+            use_container_width=True,
+            disabled=(uploaded is None),
+            key="doc_upload_btn",
+        ):
+            if uploaded is not None:
+                with st.spinner("Doküman parçalanıyor ve indeksleniyor..."):
+                    try:
+                        res = upload_document(
+                            uploaded.name,
+                            uploaded.getvalue(),
+                            overwrite=overwrite,
+                            base_url=api_url,
+                        )
+                        fname = res.get("filename") or uploaded.name
+                        chunk_cnt = res.get("chunk_count", 0)
+                        overwritten_suffix = (
+                            " (üzerine yazıldı)" if res.get("overwritten") else ""
+                        )
+                        st.session_state["doc_feedback"] = (
+                            "success",
+                            f"'{fname}' indekslendi ({chunk_cnt} parça){overwritten_suffix}.",
+                        )
+                        _refresh_health(api_url)
+                        _invalidate_docs_cache()
+                        st.rerun()
+                    except ApiClientError as exc:
+                        if exc.status_code == 409:
+                            st.session_state["doc_feedback"] = (
+                                "warning",
+                                f"'{uploaded.name}' zaten mevcut. Üzerine yazmak için "
+                                "\"Aynı isimde varsa üzerine yaz\" seçeneğini işaretleyip tekrar deneyin.",
+                            )
+                        elif exc.status_code == 413:
+                            st.session_state["doc_feedback"] = (
+                                "error",
+                                f"Dosya boyutu çok büyük: {exc}",
+                            )
+                        elif exc.status_code == 400:
+                            st.session_state["doc_feedback"] = (
+                                "error",
+                                f"Geçersiz veya boş dosya: {exc}",
+                            )
+                        else:
+                            st.session_state["doc_feedback"] = (
+                                "error",
+                                f"Yükleme başarısız: {exc}",
+                            )
+                        st.rerun()
+                    except Exception as exc:
+                        st.session_state["doc_feedback"] = (
+                            "error",
+                            f"Beklenmeyen yükleme hatası: {exc}",
+                        )
+                        st.rerun()
+
+        st.divider()
+
+        # B. Yüklü Doküman Listesi ve Silme
+        url_changed = st.session_state.docs_url != api_url
+        if not st.session_state.docs_loaded or url_changed:
+            if not st.session_state.health_error:
+                _refresh_documents(api_url)
+            else:
+                st.session_state.docs_cache = None
+                st.session_state.docs_error = None
+                st.session_state.docs_url = api_url
+
+        col_hdr, col_btn = st.columns([3, 1.6])
+        with col_hdr:
+            st.markdown("**Yüklü Dokümanlar**")
+        with col_btn:
+            if st.button("🔄 Yenile", key="doc_list_refresh_btn", use_container_width=True):
+                _refresh_health(api_url)
+                _refresh_documents(api_url)
+                st.rerun()
+
+        docs_cache = st.session_state.docs_cache
+        docs_error = st.session_state.docs_error
+
+        if st.session_state.health_error and not docs_cache:
+            st.info("Doküman listesini görmek için API bağlantısının aktif olması gerekir.")
+            return
+
+        if docs_error:
+            st.warning(f"Doküman listesi alınamadı: {docs_error}")
+            return
+
+        if not isinstance(docs_cache, dict):
+            st.caption("Doküman listesi yüklenmedi. Yenile butonunu kullanabilirsiniz.")
+            return
+
+        documents = docs_cache.get("documents") or []
+        total_docs = int(docs_cache.get("total_documents", len(documents)))
+        total_chunks = int(docs_cache.get("total_chunks", 0))
+
+        st.markdown(
+            f'<div class="doc-summary-bar">📄 {total_docs} doküman &bull; {total_chunks} parça</div>',
+            unsafe_allow_html=True,
+        )
+
+        if not documents:
+            st.caption(
+                "Bilgi bankasında henüz doküman yok. Yukarıdan `.md`, `.txt` veya `.pdf` yükleyebilirsiniz."
+            )
+            return
+
+        for doc in documents:
+            filename = str(doc.get("filename") or "")
+            if not filename:
+                continue
+            escaped_name = html.escape(filename)
+            size_label = _format_size_kb(doc.get("size_bytes"))
+            chunk_count = int(doc.get("chunk_count") or 0)
+            raw_ext = str(doc.get("extension") or Path(filename).suffix or "").lstrip(".").upper()
+            ext_badge = (
+                f'<span class="doc-ext-badge">{html.escape(raw_ext)}</span>'
+                if raw_ext
+                else ""
+            )
+
+            col_info, col_del = st.columns([4.6, 1.1])
+            with col_info:
+                st.markdown(
+                    f"""
+                    <div class="doc-item-card">
+                        <div class="doc-item-name" title="{escaped_name}">{escaped_name}</div>
+                        <div class="doc-item-meta">{ext_badge}<span>{size_label} &bull; {chunk_count} parça</span></div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with col_del:
+                if st.button(
+                    "🗑️",
+                    key=f"del_doc_{filename}",
+                    help=f"'{filename}' dokümanını sil",
+                    use_container_width=True,
+                ):
+                    with st.spinner(f"'{filename}' siliniyor..."):
+                        try:
+                            del_res = delete_document(filename, base_url=api_url)
+                            deleted_chunks = del_res.get("deleted_chunks", 0)
+                            deleted_name = del_res.get("filename") or filename
+                            st.session_state["doc_feedback"] = (
+                                "success",
+                                f"'{deleted_name}' silindi ({deleted_chunks} parça kaldırıldı).",
+                            )
+                            _refresh_health(api_url)
+                            _invalidate_docs_cache()
+                            st.rerun()
+                        except ApiClientError as exc:
+                            st.session_state["doc_feedback"] = (
+                                "error",
+                                f"'{filename}' silinemedi: {exc}",
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.session_state["doc_feedback"] = (
+                                "error",
+                                f"Beklenmeyen silme hatası: {exc}",
+                            )
+                            st.rerun()
+
+
 def _render_sidebar() -> dict[str, Any]:
     with st.sidebar:
         st.markdown("### ⚙️ Kontrol Paneli")
@@ -556,8 +838,10 @@ def _render_sidebar() -> dict[str, Any]:
 
         if st.button("🔄 Bağlantıyı Yenile", use_container_width=True):
             _refresh_health(api_url)
+            _invalidate_docs_cache()
         elif not st.session_state.health_checked or st.session_state.last_checked_url != api_url:
             _refresh_health(api_url)
+            _invalidate_docs_cache()
 
         health_data = st.session_state.health_data
         health_error = st.session_state.health_error
@@ -616,7 +900,12 @@ def _render_sidebar() -> dict[str, Any]:
 
         st.divider()
 
-        # 2. Çalışma Modu
+        # 2. Bilgi Bankası (Dinamik Doküman Yönetimi)
+        _render_knowledge_base(api_url)
+
+        st.divider()
+
+        # 3. Çalışma Modu
         st.markdown("#### 🧭 Çalışma Modu")
         mode = st.radio(
             "Çalışma Modu Seçin",

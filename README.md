@@ -23,7 +23,7 @@ Dokümanlar (data/ — .md, .txt, .pdf)
 [1. Chunker]           ──► Başlık/Paragraf bazlı parçalama + Chunk Overlap + Metadata (source, section)
         │
         ▼
-[2. Indexer]           ──► FastEmbed (384-dim Multilingual) ──► Qdrant (Local Disk Storage)
+[2. Indexer]           ──► FastEmbed (384-dim Multilingual, get_embedder) ──► Qdrant (Local Disk + Artımlı İndeksleme)
         │
         ▼
 [3. Memory & Rewriter] ──► Sliding Window Hafıza (max_turns=5) + Takip Sorusu Yeniden Yazma
@@ -46,8 +46,8 @@ Dokümanlar (data/ — .md, .txt, .pdf)
         │
         ▼
 [9. CLI / API / UI / Eval]  ──► Etkileşimli Röntgen CLI (--debug, --rerank, --agent, --max-agent-steps, --no-rewrite, --no-guardrail, --max-turns)
-                                FastAPI REST API (src/api.py: /health, /ask, /ask/stream [SSE: meta → token → done / error], /search, /sessions/{session_id}, Swagger /docs)
-                                Görsel Web Arayüzü (src/ui.py + src/ui_client.py -> Streamlit @ http://localhost:8501, ⚡ Canlı Akış)
+                                FastAPI REST API (src/api.py: /health, /ask, /ask/stream [SSE: meta → token → done / error], /search, /sessions/{session_id}, /documents, Swagger /docs)
+                                Görsel Web Arayüzü (src/ui.py + src/ui_client.py -> Streamlit @ http://localhost:8501, ⚡ Canlı Akış & 📚 Bilgi Bankası)
                                 20 Soruluk LLM-as-a-Judge Karnesi (eval/run_eval.py)
 ```
 
@@ -55,6 +55,10 @@ Dokümanlar (data/ — .md, .txt, .pdf)
 
 - **Çoklu Format ve Chunk Overlap (`src/chunker.py`)**: `.md`, `.txt` ve `.pdf` (`pypdf`) dosyalarını destekler. Başlık (`#`, `##`, `###`) ve paragraf sınırlarını koruyarak 800 karakterlik parçalara ayırır; uzun metinlerde bağlam kopmasını önlemek için **120 karakterlik Chunk Overlap** uygular.
 - **Sıfır Docker Bağımlılıklı Yerel İndeksleme (`src/indexer.py`)**: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` modeli (FastEmbed) ile üretilen 384 boyutlu vektörler, yerel disk tabanlı **Qdrant** üzerinde Cosine benzerlik metriğiyle saklanır.
+- **Dinamik Doküman Yükleme & Canlı İndeksleme (`src/indexer.py`, `src/api.py`, `src/ui.py`)**: Yeniden tam indeksleme gerektirmeden çalışma zamanında `.md`, `.txt` ve `.pdf` dokümanlarını (maks. **10 MB**, `MAX_UPLOAD_SIZE_BYTES`) yükler, parçalar ve canlı olarak Qdrant koleksiyonuna ekler veya kaldırır (`python-multipart` ile `multipart/form-data` desteği).
+  - `validate_filename` ile dosya adı uzunluğu (maks. 120 karakter), yol geçişi (`..`, `/`, `\`), kontrol karakteri, gizli dosya (`.`) ve izin verilen uzantı kontrolleri uygulanır.
+  - `make_point_id` her parça için `uuid.uuid5(uuid.NAMESPACE_URL, f"{source}:{chunk_id}")` tabanlı **deterministik UUID** üretir; `index_single_file` ve `delete_document` paylaşılan `get_embedder()` singleton'ı ve `_qdrant_lock` kilidi altında yalnızca ilgili `source` kaydına ait noktaları günceller veya siler.
+  - `save_and_index_document` içeriği geçici dosyada `chunk_file` ile ön doğrulamadan geçirip boş/okunamayan dosyaları reddeder, `overwrite=False` iken mevcut dosya çakışmalarını engeller ve indeksleme başarısız olursa diski önceki durumuna geri alır (**rollback**).
 - **Sliding Window Sohbet Hafızası (`src/memory.py`)**: `ConversationMemory` sınıfı son `N` sohbet turunu (varsayılan `max_turns=5`) kayan pencere ile saklar; sınır aşıldığında en eski tur düşer ve `get_messages()` dış değişikliklere karşı izole edilmiş mesaj kopyası döndürür.
 - **Bağlam Farkında Query Rewriting (`src/rewriter.py`)**: Takip sorularındaki zamirleri (`o`, `bunu`, `oradaki`, `peki bu` vb.) ve eksik bağlamı sohbet geçmişini kullanarak `temperature=0.0` ile tek satırlık bağımsız (standalone) arama sorgusuna dönüştürür. 1. turda (geçmiş boşken) LLM çağrısı yapmadan **0.0 ms** gecikmeyle atlanır; boş çıktı veya API hatasında uyarı vererek orijinal sorguya geri döner.
 - **İki Aşamalı Hibrit Arama + Reranking (`src/retriever.py`, `src/reranker.py`)**:
@@ -69,8 +73,8 @@ Dokümanlar (data/ — .md, .txt, .pdf)
   - Sentez öncesinde (direct chat hariç) **Guardrail** kontrolü uygulanır ve final yanıt `temperature=0.1` ile zorunlu `[dosya_adi - Bölüm]` citation kuralıyla üretilir; her karar adımı (`step`, `thought`, `action`, `query`, `chunks_found`, `duration_ms`) `agent_steps` listesiyle izlenebilir.
 - **Halüsinasyon Koruması, Citation ve Süre İzleme (`src/llm_client.py`, `src/generator.py`)**: Ortak `.env` yapılandırmalı OpenAI-uyumlu istemci üzerinden düşük sıcaklık (`temperature=0.1`) ve katı sistem kurallarıyla çalışır. Sohbet geçmişini yalnızca konuşma akışını anlamak için kullanır; tüm olgusal bilgileri o turda getirilen `DOKÜMANLAR` bölümünden alır, her bilginin sonuna `[dosya_adi - Bölüm]` kaynağı ekler, doküman dışı soruları reddeder ve `rewrite_ms`, `retrieval_ms`, `generation_ms` sürelerini ölçer (`use_agent=True` olduğunda `run_agent_rag` akışına yönlendirir).
 - **Etkileşimli Röntgen CLI (`src/cli.py`)**: `--debug`, `--search-only`, `--rerank`, `--top-k`, `--query`, `--no-rewrite`, `--no-guardrail`, `--min-rerank-score`, `--min-dense-score`, `--min-bm25-score`, `--max-turns`, `--agent` ve `--max-agent-steps` bayraklarını destekler; her soruda (varsa) yeniden yazılan sorguyu, ajan karar adımlarını (`Ajan Adımları`), Guardrail erken reddetme bilgisini, Vektör (cosine), BM25, RRF, Rerank skorlarını ve Rewrite/Arama/Üretim gecikmelerini canlı gösterir.
-- **REST API & Oturum Yönetimi (`src/api.py`)**: FastAPI tabanlı üretim uyumlu HTTP katmanı sunar; otomatik OpenAPI/Swagger (`/docs`) dokümantasyonu üretir. Bellek içi `SessionStore` (`threading.Lock` + `OrderedDict`, varsayılan `max_sessions=100`, `default_max_turns=5`) ile thread-safe ve LRU tahliyeli çok turlu oturum yönetimi sağlar (erken reddedilen sorular oturuma kaydedilmez). `src/retriever.py` içindeki `_qdrant_lock` ve `finally: client.close()` yapısı ile yerel disk tabanlı Qdrant erişiminde eşzamanlı kilit çakışmasını önler. Pydantic v2 doğrulaması (`question`/`query` boşluk kontrolü, `top_k` `1..20`, `candidate_k` `1..50`, `rrf_k >= 1`, `max_agent_steps` `1..10`, `session_id` `^[A-Za-z0-9_-]{1,128}$`) uygular; `POST /ask` `use_agent` ve `max_agent_steps` parametrelerini destekleyip yanıtta `agent_steps` döndürür. Ayrıca `POST /ask/stream` uç noktası aynı `AskRequest` şemasıyla **Server-Sent Events (`text/event-stream`)** üzerinden canlı akış sağlar ve `meta` (oturum, yeniden yazılan sorgu, guardrail durumu, kaynak parçaları, `agent_steps`, rewrite/retrieval süreleri) → `token` (`content` parçaları) → `done` (tam yanıt ve `generation_ms` dahil süreler; `early_rejected=False` ise oturuma kayıt) veya hata durumunda `error` olaylarını yayar. `/health`, `502`/`503` ve SSE `error` yanıtlarında `LLM_API_KEY`, `LLM_BASE_URL` veya iç istisna detaylarını dışarı sızdırmaz.
-- **Görsel Web Arayüzü (`src/ui.py`, `src/ui_client.py`)**: Streamlit tabanlı web arayüzü, `httpx` ile çalışan `src/ui_client.py` istemcisi üzerinden FastAPI arka ucuna (`http://127.0.0.1:8000`) bağlanır. Kenar çubuğunda canlı `/health` durum rozeti (Qdrant koleksiyonu, indekslenen parça sayısı, LLM modeli), **Tam RAG Sohbet** (`/ask` ve `/ask/stream`) ve **Sadece Arama (Röntgen)** (`/search`) çalışma modları, `top_k` (`1..10`) / Rerank / Rewrite / Guardrail anahtarları, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarı (`Maksimum Ajan Adımı` `1..5` kaydırıcısı), varsayılan açık **⚡ Canlı Akış (Streaming)** anahtarı (`ask_question_stream` üzerinden kelime/token bazlı canlı yanıt akışı), gelişmiş Guardrail eşik ayarları (`min_rerank_score`, `min_dense_score`, `min_bm25_score`) ve sunucu oturumunu sıfırlayan sohbet temizleme kontrolü (`DELETE /sessions/{session_id}`) sunar. Ana ekranda başlangıç için 4 adet tıklanabilir örnek soru kartı (çok parçalı ajan testi ve tuzak soru dahil) ve her yanıtın altında Rewrite/Arama/LLM sürelerini, **🤖 Ajan Karar Adımları** kartlarını, yeniden yazılan sorguyu, Guardrail gerekçesini ve Rerank/RRF/Vektör/BM25 skorlu kaynak parçalarını gösteren katlanabilir **🔬 Röntgen (Observability)** paneli bulunur.
+- **REST API & Oturum Yönetimi (`src/api.py`)**: FastAPI tabanlı üretim uyumlu HTTP katmanı sunar; otomatik OpenAPI/Swagger (`/docs`) dokümantasyonu üretir. Bellek içi `SessionStore` (`threading.Lock` + `OrderedDict`, varsayılan `max_sessions=100`, `default_max_turns=5`) ile thread-safe ve LRU tahliyeli çok turlu oturum yönetimi sağlar (erken reddedilen sorular oturuma kaydedilmez). `src/retriever.py` içindeki `_qdrant_lock` ve `finally: client.close()` yapısı ile yerel disk tabanlı Qdrant erişiminde eşzamanlı kilit çakışmasını önler. Pydantic v2 doğrulaması (`question`/`query` boşluk kontrolü, `top_k` `1..20`, `candidate_k` `1..50`, `rrf_k >= 1`, `max_agent_steps` `1..10`, `session_id` `^[A-Za-z0-9_-]{1,128}$`) uygular; `POST /ask` `use_agent` ve `max_agent_steps` parametrelerini destekleyip yanıtta `agent_steps` döndürür. `POST /ask/stream` uç noktası aynı `AskRequest` şemasıyla **Server-Sent Events (`text/event-stream`)** üzerinden canlı akış sağlar (`meta` → `token` → `done` / `error`). Ayrıca `GET /documents`, `POST /documents` (`multipart/form-data`, `?overwrite=true`, `201` / `400` / `409` / `413` / `503`) ve `DELETE /documents/{filename}` (`400` / `404` / `503`) uç noktalarıyla canlı doküman yönetimi sunar. `/health`, `502`/`503` ve SSE `error` yanıtlarında `LLM_API_KEY`, `LLM_BASE_URL` veya iç istisna detaylarını dışarı sızdırmaz.
+- **Görsel Web Arayüzü (`src/ui.py`, `src/ui_client.py`)**: Streamlit tabanlı web arayüzü, `httpx` ile çalışan `src/ui_client.py` istemcisi üzerinden FastAPI arka ucuna (`http://127.0.0.1:8000`) bağlanır. Kenar çubuğunda canlı `/health` durum rozeti (Qdrant koleksiyonu, indekslenen parça sayısı, LLM modeli), **📚 Bilgi Bankası (Dokümanlar)** paneli (sürükle-bırak `.md`/`.txt`/`.pdf` yükleme, `Aynı isimde varsa üzerine yaz` seçeneği, `📤 Yükle ve İndeksle`, yüklü doküman/parça özeti, `🔄 Yenile` ve `🗑️` ile tek tıkla silme), **Tam RAG Sohbet** (`/ask` ve `/ask/stream`) ve **Sadece Arama (Röntgen)** (`/search`) çalışma modları, `top_k` (`1..10`) / Rerank / Rewrite / Guardrail anahtarları, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarı (`Maksimum Ajan Adımı` `1..5` kaydırıcısı), varsayılan açık **⚡ Canlı Akış (Streaming)** anahtarı (`ask_question_stream` üzerinden kelime/token bazlı canlı yanıt akışı), gelişmiş Guardrail eşik ayarları (`min_rerank_score`, `min_dense_score`, `min_bm25_score`) ve sunucu oturumunu sıfırlayan sohbet temizleme kontrolü (`DELETE /sessions/{session_id}`) sunar. Ana ekranda başlangıç için 4 adet tıklanabilir örnek soru kartı (çok parçalı ajan testi ve tuzak soru dahil) ve her yanıtın altında Rewrite/Arama/LLM sürelerini, **🤖 Ajan Karar Adımları** kartlarını, yeniden yazılan sorguyu, Guardrail gerekçesini ve Rerank/RRF/Vektör/BM25 skorlu kaynak parçalarını gösteren katlanabilir **🔬 Röntgen (Observability)** paneli bulunur.
 - **Otomatik Değerlendirme ve LLM-as-a-Judge (`eval/run_eval.py`)**: `Recall@1`, `Recall@2`, Citation uyumu, tuzak soru reddi, Guardrail erken reddetme / yanlış pozitif sayıları, ortalama latency ve hakem LLM üzerinden **Sadakat (Faithfulness)** & **Cevap Alakası (Relevance)** metriklerini ölçer (`--no-guardrail` ile kapısız karşılaştırmayı destekler).
 
 ---
@@ -99,7 +103,7 @@ doc-rag-engine/
 ├── data/                              # Teknik dokümanlar (.md, .txt, .pdf)
 ├── src/
 │   ├── chunker.py                     # Çoklu format (.md/.txt/.pdf) + Chunk Overlap motoru
-│   ├── indexer.py                     # FastEmbed vektörleştirme ve Qdrant yerel indeksleme
+│   ├── indexer.py                     # FastEmbed vektörleştirme, Qdrant yerel ve artımlı doküman indeksleme/silme
 │   ├── llm_client.py                  # .env tabanlı ortak OpenAI-uyumlu LLM istemcisi
 │   ├── memory.py                      # Sliding window tabanlı sohbet hafızası (ConversationMemory)
 │   ├── rewriter.py                    # Bağlam farkında takip sorusu yeniden yazma (Query Rewriter)
@@ -109,15 +113,16 @@ doc-rag-engine/
 │   ├── agent.py                       # Planla → Ara → Değerlendir döngülü Agentic RAG katmanı
 │   ├── generator.py                   # OpenAI-uyumlu LLM, Citation ve süre ölçüm katmanı
 │   ├── cli.py                         # Etkileşimli sohbet ve Observability (Röntgen) CLI
-│   ├── api.py                         # FastAPI REST API, Pydantic v2 şemaları ve LRU SessionStore
+│   ├── api.py                         # FastAPI REST API (/ask, /search, /sessions, /documents), Pydantic v2 ve LRU SessionStore
 │   ├── ui_client.py                   # Streamlit arayüzü için httpx tabanlı FastAPI istemcisi
-│   └── ui.py                          # Streamlit Görsel Web Arayüzü ve 🔬 Röntgen paneli
+│   └── ui.py                          # Streamlit Görsel Web Arayüzü, 📚 Bilgi Bankası ve 🔬 Röntgen paneli
 ├── eval/
 │   ├── dataset.json                   # 20 soruluk test veri seti (16 normal + 4 tuzak soru)
 │   └── run_eval.py                    # Recall@1/2, Citation, Latency ve LLM-as-a-Judge scripti
 ├── tests/
 │   ├── test_agent.py                  # Agentic RAG planlayıcı, tekilleştirme, fallback ve entegrasyon testleri
 │   ├── test_api.py                    # REST API endpoint, doğrulama, LRU oturum ve sır izolasyonu testleri
+│   ├── test_documents.py              # Dinamik doküman doğrulama, artımlı indeksleme, /documents API ve ui_client testleri
 │   ├── test_guardrail.py              # Erken reddetme kapısı, generator ve CLI hafıza testleri
 │   ├── test_memory_and_rewriter.py    # Sohbet hafızası, query rewriter ve generator birim testleri
 │   ├── test_streaming.py              # Generator/Agent akışı, POST /ask/stream (SSE) ve ui_client akış testleri
@@ -195,6 +200,9 @@ Sunucu ayağa kalktıktan sonra etkileşimli Swagger/OpenAPI arayüzüne **`http
 | `POST /search` | LLM çağırmadan hibrit arama (+ opsiyonel rerank) | `query`, `top_k` (`1..20`, varsayılan `3`), `use_rerank`, `rrf_k` (varsayılan `10`), `candidate_k` (`1..50`, varsayılan `6`) |
 | `GET /sessions/{session_id}` | Oturum sohbet geçmişini getirme | `session_id`, `turn_count`, `max_turns`, `messages` (yoksa `404`) |
 | `DELETE /sessions/{session_id}` | Oturum sohbet geçmişini silme | `session_id`, `deleted: true` (yoksa `404`) |
+| `GET /documents` | Yüklü dokümanları ve Qdrant parça sayılarını listeleme | `documents` (`filename`, `size_bytes`, `extension`, `chunk_count`), `total_documents`, `total_chunks` (`503` hata) |
+| `POST /documents` | Yeni doküman yükleme ve canlı indeksleme (`201`) | `multipart/form-data` (`file`: `.md`/`.txt`/`.pdf`, maks. 10 MB), `?overwrite=true` opsiyonel; yanıtta `filename`, `size_bytes`, `chunk_count`, `overwritten`, `message` · Hatalar: `400`, `409`, `413`, `503` |
+| `DELETE /documents/{filename}` | Dokümanı Qdrant indeksinden ve diskten silme | `filename`, `deleted_chunks`, `deleted: true` · Hatalar: `400`, `404`, `503` |
 
 Örnek `curl` istekleri:
 
@@ -219,6 +227,14 @@ curl -s -X POST http://127.0.0.1:8000/ask \
 curl -s -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{"query": "Wildcard DNS", "top_k": 3, "use_rerank": true}'
+
+# 5) Doküman listeleme, yükleme ve silme (/documents)
+curl -s http://127.0.0.1:8000/documents
+curl -s -X POST http://127.0.0.1:8000/documents \
+  -F "file=@data/ornek.md"
+curl -s -X POST "http://127.0.0.1:8000/documents?overwrite=true" \
+  -F "file=@data/ornek.md"
+curl -s -X DELETE http://127.0.0.1:8000/documents/ornek.md
 ```
 
 6. **Streamlit Görsel Web Arayüzünü Başlatma:**
@@ -233,9 +249,9 @@ uvicorn api:app --app-dir src --reload
 streamlit run src/ui.py
 ```
 
-Arayüze tarayıcınızdan **`http://localhost:8501`** adresinden erişebilir, sol kenar çubuğundan canlı `/health` durumunu, çalışma modunu, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarını (`Maksimum Ajan Adımı` `1..5`), **⚡ Canlı Akış (Streaming)** anahtarını (`POST /ask/stream` ile kelime/token bazlı canlı yanıt akışı; kapatılırsa `/ask` kullanılır) ve Guardrail eşiklerini yönetebilirsiniz. Ajan modu açıkken her yanıtın altındaki **🔬 Röntgen (Observability)** panelinde **🤖 Ajan Karar Adımları** (`search`, `answer`, `direct_chat`, `fallback` aksiyonları, düşünce gerekçesi, alt sorgu, bulunan parça sayısı ve adım süresi) görüntülenir.
+Arayüze tarayıcınızdan **`http://localhost:8501`** adresinden erişebilir, sol kenar çubuğundan canlı `/health` durumunu, **📚 Bilgi Bankası (Dokümanlar)** bölümünü (sürükle-bırak `.md`/`.txt`/`.pdf` doküman yükleme, `Aynı isimde varsa üzerine yaz` seçeneğiyle `📤 Yükle ve İndeksle`, yüklü doküman/parça özeti, `🔄 Yenile` ve `🗑️` ile tek tıkla silme), çalışma modunu, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarını (`Maksimum Ajan Adımı` `1..5`), **⚡ Canlı Akış (Streaming)** anahtarını (`POST /ask/stream` ile kelime/token bazlı canlı yanıt akışı; kapatılırsa `/ask` kullanılır) ve Guardrail eşiklerini yönetebilirsiniz. Ajan modu açıkken her yanıtın altındaki **🔬 Röntgen (Observability)** panelinde **🤖 Ajan Karar Adımları** (`search`, `answer`, `direct_chat`, `fallback` aksiyonları, düşünce gerekçesi, alt sorgu, bulunan parça sayısı ve adım süresi) görüntülenir.
 
-7. **Birim Testlerini Çalıştırma:**
+7. **Birim Testlerini Çalıştırma (99 Test — `tests/test_documents.py` dahil):**
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v

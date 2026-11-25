@@ -348,8 +348,13 @@ class TestRunAgentRag(unittest.TestCase):
 
 class TestAgentIntegrations(unittest.TestCase):
     def setUp(self):
-        api.session_store.clear_all()
+        self._orig_store = api.session_store
+        api.session_store = api.SessionStore(db_path=":memory:")
         self.client = TestClient(api.app)
+
+    def tearDown(self):
+        api.session_store.close()
+        api.session_store = self._orig_store
 
     def test_generator_delegates_to_run_agent_rag_when_use_agent_true(self):
         fake_trace = {

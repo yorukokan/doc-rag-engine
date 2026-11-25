@@ -9,10 +9,8 @@ import json
 import logging
 import os
 import re
-import threading
 import time
 import uuid
-from collections import OrderedDict
 from collections.abc import Iterator
 from typing import Literal
 
@@ -34,72 +32,15 @@ from indexer import (
     validate_filename,
 )
 from llm_client import MODEL_NAME
-from memory import ConversationMemory
 from reranker import RERANK_MODEL
 from retriever import EMBEDDING_MODEL, get_qdrant_health, search
+from session_store import DEFAULT_SESSION_DB_PATH, SqliteSessionStore
 
 logger = logging.getLogger(__name__)
 
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
-
-class SessionStore:
-    """Thread-safe, LRU tahliyeli bellek içi oturum deposu."""
-
-    def __init__(self, max_sessions: int = 100, default_max_turns: int = 5) -> None:
-        if isinstance(max_sessions, bool) or not isinstance(max_sessions, int) or max_sessions < 1:
-            raise ValueError("max_sessions en az 1 olan bir tam sayı olmalıdır.")
-        if (
-            isinstance(default_max_turns, bool)
-            or not isinstance(default_max_turns, int)
-            or default_max_turns < 1
-        ):
-            raise ValueError("default_max_turns en az 1 olan bir tam sayı olmalıdır.")
-        self.max_sessions = max_sessions
-        self.default_max_turns = default_max_turns
-        self._sessions: OrderedDict[str, ConversationMemory] = OrderedDict()
-        self._lock = threading.Lock()
-
-    def get_history(self, session_id: str) -> list[dict]:
-        with self._lock:
-            memory = self._sessions.get(session_id)
-            if memory is None:
-                return []
-            self._sessions.move_to_end(session_id)
-            return memory.get_messages()
-
-    def record_turn(self, session_id: str, user_message: str, assistant_message: str) -> None:
-        with self._lock:
-            memory = self._sessions.get(session_id)
-            if memory is None:
-                memory = ConversationMemory(max_turns=self.default_max_turns)
-                self._sessions[session_id] = memory
-                if len(self._sessions) > self.max_sessions:
-                    self._sessions.popitem(last=False)
-            else:
-                self._sessions.move_to_end(session_id)
-            memory.add_turn(user_message, assistant_message)
-
-    def get_session(self, session_id: str) -> dict | None:
-        with self._lock:
-            memory = self._sessions.get(session_id)
-            if memory is None:
-                return None
-            self._sessions.move_to_end(session_id)
-            return {
-                "session_id": session_id,
-                "turn_count": memory.turn_count,
-                "max_turns": memory.max_turns,
-                "messages": memory.get_messages(),
-            }
-
-    def delete_session(self, session_id: str) -> bool:
-        with self._lock:
-            return self._sessions.pop(session_id, None) is not None
-
-    def clear_all(self) -> None:
-        with self._lock:
-            self._sessions.clear()
+SessionStore = SqliteSessionStore
 
 
 class ChunkResult(BaseModel):
@@ -155,6 +96,7 @@ class AskRequest(BaseModel):
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE
     use_agent: bool = False
     max_agent_steps: int = Field(default=3, ge=1, le=10)
+    source_filter: list[str] | None = None
 
     @field_validator("question")
     @classmethod
@@ -178,6 +120,13 @@ class AskRequest(BaseModel):
             )
         return cleaned
 
+    @field_validator("source_filter")
+    @classmethod
+    def validate_source_filter(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
 
 class AskResponse(BaseModel):
     session_id: str
@@ -196,6 +145,7 @@ class SearchRequest(BaseModel):
     use_rerank: bool = False
     rrf_k: int = Field(default=10, ge=1)
     candidate_k: int = Field(default=6, ge=1, le=50)
+    source_filter: list[str] | None = None
 
     @field_validator("query")
     @classmethod
@@ -204,6 +154,13 @@ class SearchRequest(BaseModel):
         if not cleaned:
             raise ValueError("Arama sorgusu boş olamaz.")
         return cleaned
+
+    @field_validator("source_filter")
+    @classmethod
+    def validate_source_filter(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 class SearchResponse(BaseModel):
@@ -215,6 +172,20 @@ class SearchResponse(BaseModel):
 class SessionMessage(BaseModel):
     role: str
     content: str
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    turn_count: int
+    max_turns: int
+    created_at: float
+    updated_at: float
+    preview: str
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionSummary]
+    total_sessions: int
 
 
 class SessionResponse(BaseModel):
@@ -256,7 +227,9 @@ class DocumentDeleteResponse(BaseModel):
     deleted: bool
 
 
-session_store = SessionStore()
+session_store = SqliteSessionStore(
+    db_path=os.getenv("SESSION_DB_PATH", DEFAULT_SESSION_DB_PATH)
+)
 
 app = FastAPI(
     title="Doc-RAG Engine API",
@@ -296,19 +269,22 @@ def ask(req: AskRequest) -> AskResponse:
     history = session_store.get_history(session_id)
 
     try:
-        trace = ask_rag_with_trace(
-            question=req.question,
-            top_k=req.top_k,
-            use_rerank=req.use_rerank,
-            history=history,
-            use_rewrite=req.use_rewrite,
-            use_guardrail=req.use_guardrail,
-            min_rerank_score=req.min_rerank_score,
-            min_dense_score=req.min_dense_score,
-            min_bm25_score=req.min_bm25_score,
-            use_agent=req.use_agent,
-            max_agent_steps=req.max_agent_steps,
-        )
+        ask_kwargs = {
+            "question": req.question,
+            "top_k": req.top_k,
+            "use_rerank": req.use_rerank,
+            "history": history,
+            "use_rewrite": req.use_rewrite,
+            "use_guardrail": req.use_guardrail,
+            "min_rerank_score": req.min_rerank_score,
+            "min_dense_score": req.min_dense_score,
+            "min_bm25_score": req.min_bm25_score,
+            "use_agent": req.use_agent,
+            "max_agent_steps": req.max_agent_steps,
+        }
+        if req.source_filter is not None:
+            ask_kwargs["source_filter"] = req.source_filter
+        trace = ask_rag_with_trace(**ask_kwargs)
     except Exception:
         logger.exception("POST /ask sırasında beklenmeyen hata oluştu (session_id=%s)", session_id)
         raise HTTPException(
@@ -352,19 +328,22 @@ def ask_stream(req: AskRequest) -> StreamingResponse:
         retrieval_ms = 0.0
 
         try:
-            for item in ask_rag_stream(
-                question=req.question,
-                top_k=req.top_k,
-                use_rerank=req.use_rerank,
-                history=history,
-                use_rewrite=req.use_rewrite,
-                use_guardrail=req.use_guardrail,
-                min_rerank_score=req.min_rerank_score,
-                min_dense_score=req.min_dense_score,
-                min_bm25_score=req.min_bm25_score,
-                use_agent=req.use_agent,
-                max_agent_steps=req.max_agent_steps,
-            ):
+            stream_kwargs = {
+                "question": req.question,
+                "top_k": req.top_k,
+                "use_rerank": req.use_rerank,
+                "history": history,
+                "use_rewrite": req.use_rewrite,
+                "use_guardrail": req.use_guardrail,
+                "min_rerank_score": req.min_rerank_score,
+                "min_dense_score": req.min_dense_score,
+                "min_bm25_score": req.min_bm25_score,
+                "use_agent": req.use_agent,
+                "max_agent_steps": req.max_agent_steps,
+            }
+            if req.source_filter is not None:
+                stream_kwargs["source_filter"] = req.source_filter
+            for item in ask_rag_stream(**stream_kwargs):
                 event_type = item.get("type")
                 if event_type == "meta":
                     early_rejected = bool(item.get("early_rejected", False))
@@ -430,13 +409,16 @@ def ask_stream(req: AskRequest) -> StreamingResponse:
 def search_docs(req: SearchRequest) -> SearchResponse:
     t0 = time.perf_counter()
     try:
-        chunks = search(
-            query=req.query,
-            top_k=req.top_k,
-            rrf_k=req.rrf_k,
-            use_rerank=req.use_rerank,
-            candidate_k=req.candidate_k,
-        )
+        search_kwargs = {
+            "query": req.query,
+            "top_k": req.top_k,
+            "rrf_k": req.rrf_k,
+            "use_rerank": req.use_rerank,
+            "candidate_k": req.candidate_k,
+        }
+        if req.source_filter is not None:
+            search_kwargs["source_filter"] = req.source_filter
+        chunks = search(**search_kwargs)
     except Exception:
         logger.exception("POST /search sırasında beklenmeyen hata oluştu")
         raise HTTPException(
@@ -449,6 +431,16 @@ def search_docs(req: SearchRequest) -> SearchResponse:
         query=req.query,
         chunks=[ChunkResult(**chunk) for chunk in chunks],
         retrieval_ms=retrieval_ms,
+    )
+
+
+@app.get("/sessions", response_model=SessionListResponse)
+def list_sessions(limit: int = Query(50, ge=1, le=200)) -> SessionListResponse:
+    raw_sessions = session_store.list_sessions(limit=limit)
+    sessions = [SessionSummary(**item) for item in raw_sessions]
+    return SessionListResponse(
+        sessions=sessions,
+        total_sessions=len(sessions),
     )
 
 

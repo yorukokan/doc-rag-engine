@@ -15,7 +15,7 @@ COPY src/ ./src/
 COPY data/ ./data/
 
 RUN adduser --disabled-password --gecos "" appuser \
-    && mkdir -p /app/data /app/qdrant_data /app/.cache \
+    && mkdir -p /app/data /app/qdrant_data /app/session_data /app/.cache \
     && chown -R appuser:appuser /app
 
 USER appuser

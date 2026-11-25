@@ -31,8 +31,13 @@ SAMPLE_CHUNK = {
 
 class TestHealthEndpoint(unittest.TestCase):
     def setUp(self):
-        api.session_store.clear_all()
+        self._orig_store = api.session_store
+        api.session_store = api.SessionStore(db_path=":memory:")
         self.client = TestClient(api.app)
+
+    def tearDown(self):
+        api.session_store.close()
+        api.session_store = self._orig_store
 
     def test_health_ok_and_does_not_leak_secrets(self):
         mock_health = {
@@ -93,8 +98,13 @@ class TestHealthEndpoint(unittest.TestCase):
 
 class TestSearchEndpoint(unittest.TestCase):
     def setUp(self):
-        api.session_store.clear_all()
+        self._orig_store = api.session_store
+        api.session_store = api.SessionStore(db_path=":memory:")
         self.client = TestClient(api.app)
+
+    def tearDown(self):
+        api.session_store.close()
+        api.session_store = self._orig_store
 
     def test_search_success_returns_chunks_and_retrieval_ms(self):
         with patch.object(api, "search", return_value=[SAMPLE_CHUNK]) as mock_search:
@@ -144,8 +154,13 @@ class TestSearchEndpoint(unittest.TestCase):
 
 class TestAskAndSessionEndpoints(unittest.TestCase):
     def setUp(self):
-        api.session_store.clear_all()
+        self._orig_store = api.session_store
+        api.session_store = api.SessionStore(db_path=":memory:")
         self.client = TestClient(api.app)
+
+    def tearDown(self):
+        api.session_store.close()
+        api.session_store = self._orig_store
 
     def test_multi_turn_ask_passes_history_and_persists_session(self):
         captured_histories = []
@@ -283,15 +298,18 @@ class TestAskAndSessionEndpoints(unittest.TestCase):
 class TestSessionStoreAndQdrantHealth(unittest.TestCase):
     def test_session_store_lru_eviction(self):
         store = api.SessionStore(max_sessions=2, default_max_turns=3)
-        store.record_turn("s1", "q1", "a1")
-        store.record_turn("s2", "q2", "a2")
-        # s1'e erişerek onu en güncel hale getir -> s2 en eski olur
-        self.assertEqual(len(store.get_history("s1")), 2)
-        store.record_turn("s3", "q3", "a3")
+        try:
+            store.record_turn("s1", "q1", "a1")
+            store.record_turn("s2", "q2", "a2")
+            # s1'e erişerek onu en güncel hale getir -> s2 en eski olur
+            self.assertEqual(len(store.get_history("s1")), 2)
+            store.record_turn("s3", "q3", "a3")
 
-        self.assertIsNotNone(store.get_session("s1"))
-        self.assertIsNone(store.get_session("s2"))
-        self.assertIsNotNone(store.get_session("s3"))
+            self.assertIsNotNone(store.get_session("s1"))
+            self.assertIsNone(store.get_session("s2"))
+            self.assertIsNotNone(store.get_session("s3"))
+        finally:
+            store.close()
 
     def test_get_qdrant_health_success_and_error(self):
         mock_client = MagicMock()

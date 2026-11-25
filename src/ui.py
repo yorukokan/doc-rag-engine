@@ -6,6 +6,7 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 import html
+import uuid
 from typing import Any
 
 import streamlit as st
@@ -18,7 +19,9 @@ from ui_client import (
     check_health,
     delete_document,
     delete_session,
+    get_session,
     list_documents,
+    list_sessions,
     search_docs,
     upload_document,
 )
@@ -324,6 +327,44 @@ def _inject_styles() -> None:
             background: rgba(128, 128, 128, 0.15);
             border: 1px solid rgba(128, 128, 128, 0.25);
         }
+        .source-filter-banner {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.55rem;
+            background: rgba(59, 130, 246, 0.09);
+            border: 1px solid rgba(59, 130, 246, 0.28);
+            margin: 0.25rem 0 0.85rem 0;
+            font-size: 0.84rem;
+        }
+        .filter-banner-label {
+            font-weight: 600;
+            margin-right: 0.15rem;
+        }
+        .filter-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.14rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.35);
+            word-break: break-word;
+        }
+        .session-preview-box {
+            padding: 0.45rem 0.6rem;
+            border-radius: 0.45rem;
+            border: 1px solid rgba(128, 128, 128, 0.2);
+            background: rgba(128, 128, 128, 0.05);
+            font-size: 0.78rem;
+            line-height: 1.4;
+            margin: 0.25rem 0 0.5rem 0;
+            word-break: break-word;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -346,6 +387,12 @@ def _init_session_state() -> None:
         "docs_loaded": False,
         "docs_url": None,
         "doc_feedback": None,
+        "source_filter_selection": [],
+        "sessions_cache": None,
+        "sessions_error": None,
+        "sessions_loaded": False,
+        "sessions_url": None,
+        "session_feedback": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -384,6 +431,26 @@ def _refresh_documents(base_url: str) -> None:
         st.session_state.docs_error = f"Doküman listesi alınamadı: {exc}"
     st.session_state.docs_loaded = True
     st.session_state.docs_url = base_url
+
+
+def _invalidate_sessions_cache() -> None:
+    st.session_state.sessions_cache = None
+    st.session_state.sessions_error = None
+    st.session_state.sessions_loaded = False
+
+
+def _refresh_sessions(base_url: str) -> None:
+    try:
+        st.session_state.sessions_cache = list_sessions(base_url=base_url)
+        st.session_state.sessions_error = None
+    except ApiClientError as exc:
+        st.session_state.sessions_cache = None
+        st.session_state.sessions_error = str(exc)
+    except Exception as exc:
+        st.session_state.sessions_cache = None
+        st.session_state.sessions_error = f"Oturum listesi alınamadı: {exc}"
+    st.session_state.sessions_loaded = True
+    st.session_state.sessions_url = base_url
 
 
 def _format_size_kb(size_bytes: Any) -> str:
@@ -600,6 +667,17 @@ def _render_search_observability(msg: dict[str, Any]) -> None:
         _render_chunk_cards(chunks)
 
 
+def _has_chat_observability(msg: dict[str, Any]) -> bool:
+    if msg.get("from_history"):
+        return False
+    return bool(
+        msg.get("timings")
+        or msg.get("chunks")
+        or msg.get("agent_steps")
+        or msg.get("early_rejected")
+    )
+
+
 def _render_message(msg: dict[str, Any]) -> None:
     role = msg.get("role", "assistant")
     mode = msg.get("mode", "chat")
@@ -624,7 +702,8 @@ def _render_message(msg: dict[str, Any]) -> None:
                 unsafe_allow_html=True,
             )
         st.markdown(msg.get("content", ""))
-        _render_chat_observability(msg)
+        if _has_chat_observability(msg):
+            _render_chat_observability(msg)
 
 
 def _render_knowledge_base(api_url: str) -> None:
@@ -800,6 +879,13 @@ def _render_knowledge_base(api_url: str) -> None:
                             del_res = delete_document(filename, base_url=api_url)
                             deleted_chunks = del_res.get("deleted_chunks", 0)
                             deleted_name = del_res.get("filename") or filename
+                            current_filter = st.session_state.get("source_filter_selection")
+                            if isinstance(current_filter, list):
+                                st.session_state["source_filter_selection"] = [
+                                    item
+                                    for item in current_filter
+                                    if item not in {filename, deleted_name}
+                                ]
                             st.session_state["doc_feedback"] = (
                                 "success",
                                 f"'{deleted_name}' silindi ({deleted_chunks} parça kaldırıldı).",
@@ -821,6 +907,208 @@ def _render_knowledge_base(api_url: str) -> None:
                             st.rerun()
 
 
+def _render_source_filter() -> list[str] | None:
+    st.markdown("#### 🎯 Kaynak Filtresi")
+    docs_cache = st.session_state.docs_cache
+    doc_names: list[str] = []
+    if isinstance(docs_cache, dict):
+        doc_names = [
+            str(doc.get("filename"))
+            for doc in (docs_cache.get("documents") or [])
+            if doc.get("filename")
+        ]
+
+    current_selection = st.session_state.get("source_filter_selection")
+    if isinstance(current_selection, list):
+        valid_selection = (
+            [name for name in current_selection if name in doc_names]
+            if doc_names
+            else []
+        )
+        if valid_selection != current_selection:
+            st.session_state["source_filter_selection"] = valid_selection
+    else:
+        st.session_state["source_filter_selection"] = []
+
+    has_docs = bool(doc_names)
+    selected_sources = st.multiselect(
+        "Sadece seçili dokümanlarda ara",
+        options=doc_names,
+        key="source_filter_selection",
+        placeholder="Tüm dokümanlar",
+        disabled=not has_docs,
+        help="Belirli dokümanları seçerseniz arama ve yanıt üretimi yalnızca bu kaynaklarla sınırlandırılır.",
+    )
+
+    active_source_filter: list[str] | None = (
+        list(selected_sources) if (has_docs and selected_sources) else None
+    )
+    if not has_docs:
+        st.caption("Filtreleme için bilgi bankasında en az bir doküman bulunmalıdır.")
+    elif active_source_filter:
+        st.caption(f"🎯 {len(active_source_filter)} doküman seçili.")
+    return active_source_filter
+
+
+def _render_session_history(api_url: str) -> None:
+    feedback = st.session_state.get("session_feedback")
+    has_feedback = bool(feedback)
+
+    with st.expander("💬 Geçmiş Sohbetler", expanded=has_feedback):
+        if feedback:
+            level, message = feedback
+            if level == "success":
+                st.success(message)
+            elif level == "warning":
+                st.warning(message)
+            elif level == "error":
+                st.error(message)
+            else:
+                st.info(message)
+            st.session_state["session_feedback"] = None
+
+        url_changed = st.session_state.sessions_url != api_url
+        if not st.session_state.sessions_loaded or url_changed:
+            if not st.session_state.health_error:
+                _refresh_sessions(api_url)
+            else:
+                st.session_state.sessions_cache = None
+                st.session_state.sessions_error = None
+                st.session_state.sessions_url = api_url
+
+        col_hdr, col_btn = st.columns([3, 1.6])
+        with col_hdr:
+            st.markdown("**Kayıtlı Oturumlar**")
+        with col_btn:
+            if st.button("🔄 Yenile", key="session_list_refresh_btn", use_container_width=True):
+                _refresh_sessions(api_url)
+                st.rerun()
+
+        sessions_cache = st.session_state.sessions_cache
+        sessions_error = st.session_state.sessions_error
+
+        if st.session_state.health_error and not sessions_cache:
+            st.info("Geçmiş sohbetleri görmek için API bağlantısının aktif olması gerekir.")
+            return
+
+        if sessions_error:
+            st.warning(f"Geçmiş sohbetler alınamadı: {sessions_error}")
+            return
+
+        if not isinstance(sessions_cache, dict):
+            st.caption("Oturum listesi yüklenmedi. Yenile butonunu kullanabilirsiniz.")
+            return
+
+        sessions = sessions_cache.get("sessions") or []
+        total_sessions = int(sessions_cache.get("total_sessions", len(sessions)))
+
+        if not sessions:
+            st.caption("Henüz kaydedilmiş geçmiş sohbet yok.")
+            return
+
+        st.markdown(
+            f'<div class="doc-summary-bar">💬 {total_sessions} kayıtlı oturum</div>',
+            unsafe_allow_html=True,
+        )
+
+        session_map: dict[str, dict[str, Any]] = {
+            str(s["session_id"]): s for s in sessions if s.get("session_id")
+        }
+        session_ids = list(session_map.keys())
+        if not session_ids:
+            st.caption("Geçerli oturum kaydı bulunamadı.")
+            return
+
+        def _format_session_label(sid: str) -> str:
+            item = session_map.get(sid) or {}
+            preview = str(item.get("preview") or "").strip()
+            label_base = (
+                _format_preview(preview, max_chars=36)
+                if preview
+                else _shorten_session_id(sid)
+            )
+            turn_count = int(item.get("turn_count") or 0)
+            active_prefix = "● " if sid == st.session_state.session_id else ""
+            return f"{active_prefix}{label_base} ({turn_count} tur)"
+
+        selected_sid = st.selectbox(
+            "Kayıtlı oturum seçin",
+            options=session_ids,
+            format_func=_format_session_label,
+            key="history_session_select",
+            label_visibility="collapsed",
+        )
+
+        if selected_sid and selected_sid in session_map:
+            selected_meta = session_map[selected_sid]
+            preview_text = str(selected_meta.get("preview") or "").strip()
+            turn_count = int(selected_meta.get("turn_count") or 0)
+            max_turns = selected_meta.get("max_turns")
+            turns_label = (
+                f"{turn_count}/{max_turns} tur"
+                if max_turns is not None
+                else f"{turn_count} tur"
+            )
+            escaped_sid = html.escape(_shorten_session_id(selected_sid))
+            escaped_preview = html.escape(
+                _format_preview(preview_text, max_chars=120)
+                if preview_text
+                else "Önizleme yok"
+            )
+            st.markdown(
+                f"""
+                <div class="session-preview-box">
+                    <div><strong>ID:</strong> <code>{escaped_sid}</code> &bull; {html.escape(turns_label)}</div>
+                    <div style="opacity:0.85;margin-top:0.2rem;">{escaped_preview}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        if st.button(
+            "📂 Yükle",
+            key="load_history_session_btn",
+            use_container_width=True,
+            disabled=(not selected_sid),
+        ):
+            if selected_sid:
+                with st.spinner("Oturum yükleniyor..."):
+                    try:
+                        session_data = get_session(selected_sid, base_url=api_url)
+                        raw_messages = session_data.get("messages") or []
+                        loaded_messages: list[dict[str, Any]] = [
+                            {
+                                "role": str(m.get("role")),
+                                "mode": "chat",
+                                "content": str(m.get("content") or ""),
+                                "from_history": True,
+                            }
+                            for m in raw_messages
+                            if m.get("role") in {"user", "assistant"}
+                        ]
+                        st.session_state.session_id = str(
+                            session_data.get("session_id") or selected_sid
+                        )
+                        st.session_state.messages = loaded_messages
+                        st.session_state.pending_prompt = None
+                        st.session_state.clear_notice = (
+                            f"Geçmiş oturum yüklendi ({len(loaded_messages)} mesaj)."
+                        )
+                        st.rerun()
+                    except ApiClientError as exc:
+                        st.session_state["session_feedback"] = (
+                            "error",
+                            f"Oturum yüklenemedi: {exc}",
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.session_state["session_feedback"] = (
+                            "error",
+                            f"Beklenmeyen oturum yükleme hatası: {exc}",
+                        )
+                        st.rerun()
+
+
 def _render_sidebar() -> dict[str, Any]:
     with st.sidebar:
         st.markdown("### ⚙️ Kontrol Paneli")
@@ -839,9 +1127,11 @@ def _render_sidebar() -> dict[str, Any]:
         if st.button("🔄 Bağlantıyı Yenile", use_container_width=True):
             _refresh_health(api_url)
             _invalidate_docs_cache()
+            _invalidate_sessions_cache()
         elif not st.session_state.health_checked or st.session_state.last_checked_url != api_url:
             _refresh_health(api_url)
             _invalidate_docs_cache()
+            _invalidate_sessions_cache()
 
         health_data = st.session_state.health_data
         health_error = st.session_state.health_error
@@ -902,6 +1192,11 @@ def _render_sidebar() -> dict[str, Any]:
 
         # 2. Bilgi Bankası (Dinamik Doküman Yönetimi)
         _render_knowledge_base(api_url)
+
+        st.divider()
+
+        # 3. Kaynak Filtresi
+        active_source_filter = _render_source_filter()
 
         st.divider()
 
@@ -1002,7 +1297,7 @@ def _render_sidebar() -> dict[str, Any]:
 
         st.divider()
 
-        # 4. Oturum Yönetimi
+        # 5. Oturum Yönetimi & Geçmiş Sohbetler
         st.markdown("#### 💬 Oturum Yönetimi")
         active_sid = st.session_state.session_id
         st.caption(f"Aktif Oturum: `{_shorten_session_id(active_sid)}`")
@@ -1010,6 +1305,18 @@ def _render_sidebar() -> dict[str, Any]:
         if st.session_state.clear_notice:
             st.caption(st.session_state.clear_notice)
             st.session_state.clear_notice = None
+
+        if st.button(
+            "➕ Yeni Sohbet",
+            use_container_width=True,
+            key="new_chat_btn",
+            help="Sunucudaki mevcut oturumu silmeden yeni bir sohbet başlatır.",
+        ):
+            st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.messages = []
+            st.session_state.pending_prompt = None
+            st.session_state.clear_notice = "Yeni sohbet başlatıldı."
+            st.rerun()
 
         if st.button(
             "🗑️ Sohbeti Temizle",
@@ -1026,7 +1333,10 @@ def _render_sidebar() -> dict[str, Any]:
             st.session_state.session_id = None
             st.session_state.pending_prompt = None
             st.session_state.clear_notice = notice
+            _invalidate_sessions_cache()
             st.rerun()
+
+        _render_session_history(api_url)
 
     return {
         "api_url": api_url,
@@ -1041,6 +1351,7 @@ def _render_sidebar() -> dict[str, Any]:
         "min_rerank_score": float(min_rerank_score),
         "min_dense_score": float(min_dense_score),
         "min_bm25_score": float(min_bm25_score),
+        "source_filter": active_source_filter,
     }
 
 
@@ -1090,6 +1401,7 @@ def _handle_streaming_chat(cleaned_prompt: str, config: dict[str, Any]) -> None:
         done_received = False
 
         try:
+            active_source_filter = config.get("source_filter") or None
             stream = ask_question_stream(
                 question=cleaned_prompt,
                 session_id=st.session_state.session_id,
@@ -1102,6 +1414,7 @@ def _handle_streaming_chat(cleaned_prompt: str, config: dict[str, Any]) -> None:
                 min_rerank_score=config["min_rerank_score"],
                 min_dense_score=config["min_dense_score"],
                 min_bm25_score=config["min_bm25_score"],
+                source_filter=active_source_filter,
                 base_url=config["api_url"],
             )
 
@@ -1149,6 +1462,7 @@ def _handle_streaming_chat(cleaned_prompt: str, config: dict[str, Any]) -> None:
                         "timings": data.get("timings") or meta_data.get("timings") or {},
                     }
                     st.session_state.messages.append(assistant_msg)
+                    _invalidate_sessions_cache()
                     _render_chat_observability(assistant_msg)
                     break
 
@@ -1215,6 +1529,7 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
             spinner_text = "Hibrit arama ve skorlama çalıştırılıyor..."
         with st.spinner(spinner_text):
             try:
+                active_source_filter = config.get("source_filter") or None
                 if mode == MODE_CHAT:
                     result = ask_question(
                         question=cleaned_prompt,
@@ -1228,10 +1543,12 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
                         min_rerank_score=config["min_rerank_score"],
                         min_dense_score=config["min_dense_score"],
                         min_bm25_score=config["min_bm25_score"],
+                        source_filter=active_source_filter,
                         base_url=config["api_url"],
                     )
                     if result.get("session_id"):
                         st.session_state.session_id = result["session_id"]
+                    _invalidate_sessions_cache()
 
                     assistant_msg: dict[str, Any] = {
                         "role": "assistant",
@@ -1250,6 +1567,7 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
                         query=cleaned_prompt,
                         top_k=config["top_k"],
                         use_rerank=config["use_rerank"],
+                        source_filter=active_source_filter,
                         base_url=config["api_url"],
                     )
                     chunks = result.get("chunks", [])
@@ -1296,6 +1614,24 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
             _render_chat_observability(assistant_msg)
 
 
+def _render_active_source_filter_banner(source_filter: list[str] | None) -> None:
+    if not source_filter:
+        return
+    chips_html = "".join(
+        f'<span class="filter-chip">📄 {html.escape(str(name))}</span>'
+        for name in source_filter
+    )
+    st.markdown(
+        f"""
+        <div class="source-filter-banner">
+            <span class="filter-banner-label">🎯 Aktif Kaynak Filtresi ({len(source_filter)}):</span>
+            {chips_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     _inject_styles()
     _init_session_state()
@@ -1310,6 +1646,8 @@ def main() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    _render_active_source_filter_banner(config.get("source_filter"))
 
     if not st.session_state.messages and not st.session_state.pending_prompt:
         _render_empty_state(config["mode"])

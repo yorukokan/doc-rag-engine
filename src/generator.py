@@ -24,6 +24,7 @@ def _prepare_standard_rag(
     min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
     min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    source_filter: list[str] | None = None,
 ) -> dict:
     # 1. Sohbet geçmişi varsa ve rewrite açıksa takip sorusunu bağımsız arama sorgusuna çevir
     if use_rewrite and history:
@@ -39,7 +40,10 @@ def _prepare_standard_rag(
 
     # 2. Qdrant + BM25 (ve isteğe bağlı Reranker) ile en alakalı kartları bul ve süresini ölç
     t0 = time.perf_counter()
-    retrieved_chunks = search(rewritten_query, top_k=top_k, use_rerank=use_rerank)
+    search_kwargs: dict = {"top_k": top_k, "use_rerank": use_rerank}
+    if source_filter is not None:
+        search_kwargs["source_filter"] = source_filter
+    retrieved_chunks = search(rewritten_query, **search_kwargs)
     retrieval_ms = round((time.perf_counter() - t0) * 1000, 1)
 
     # 2.5. Erken Reddetme Kapısı (Guardrail): Skorlar eşiğin altındaysa LLM'i hiç çağırma
@@ -119,23 +123,27 @@ def ask_rag_with_trace(
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
     use_agent: bool = False,
     max_agent_steps: int = 3,
+    source_filter: list[str] | None = None,
 ) -> dict:
     if use_agent:
-        return run_agent_rag(
-            question=question,
-            top_k=top_k,
-            use_rerank=use_rerank,
-            history=history,
-            use_rewrite=use_rewrite,
-            use_guardrail=use_guardrail,
-            min_rerank_score=min_rerank_score,
-            min_dense_score=min_dense_score,
-            min_bm25_score=min_bm25_score,
-            max_steps=max_agent_steps,
-            llm_client=client,
-            model_name=MODEL_NAME,
-            search_fn=search,
-        )
+        agent_kwargs = {
+            "question": question,
+            "top_k": top_k,
+            "use_rerank": use_rerank,
+            "history": history,
+            "use_rewrite": use_rewrite,
+            "use_guardrail": use_guardrail,
+            "min_rerank_score": min_rerank_score,
+            "min_dense_score": min_dense_score,
+            "min_bm25_score": min_bm25_score,
+            "max_steps": max_agent_steps,
+            "llm_client": client,
+            "model_name": MODEL_NAME,
+            "search_fn": search,
+        }
+        if source_filter is not None:
+            agent_kwargs["source_filter"] = source_filter
+        return run_agent_rag(**agent_kwargs)
 
     prep = _prepare_standard_rag(
         question=question,
@@ -147,6 +155,7 @@ def ask_rag_with_trace(
         min_rerank_score=min_rerank_score,
         min_dense_score=min_dense_score,
         min_bm25_score=min_bm25_score,
+        source_filter=source_filter,
     )
 
     if prep["early_rejected"]:
@@ -197,23 +206,27 @@ def ask_rag_stream(
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
     use_agent: bool = False,
     max_agent_steps: int = 3,
+    source_filter: list[str] | None = None,
 ) -> Iterator[dict]:
     if use_agent:
-        yield from run_agent_rag_stream(
-            question=question,
-            top_k=top_k,
-            use_rerank=use_rerank,
-            history=history,
-            use_rewrite=use_rewrite,
-            use_guardrail=use_guardrail,
-            min_rerank_score=min_rerank_score,
-            min_dense_score=min_dense_score,
-            min_bm25_score=min_bm25_score,
-            max_steps=max_agent_steps,
-            llm_client=client,
-            model_name=MODEL_NAME,
-            search_fn=search,
-        )
+        agent_kwargs = {
+            "question": question,
+            "top_k": top_k,
+            "use_rerank": use_rerank,
+            "history": history,
+            "use_rewrite": use_rewrite,
+            "use_guardrail": use_guardrail,
+            "min_rerank_score": min_rerank_score,
+            "min_dense_score": min_dense_score,
+            "min_bm25_score": min_bm25_score,
+            "max_steps": max_agent_steps,
+            "llm_client": client,
+            "model_name": MODEL_NAME,
+            "search_fn": search,
+        }
+        if source_filter is not None:
+            agent_kwargs["source_filter"] = source_filter
+        yield from run_agent_rag_stream(**agent_kwargs)
         return
 
     prep = _prepare_standard_rag(
@@ -226,6 +239,7 @@ def ask_rag_stream(
         min_rerank_score=min_rerank_score,
         min_dense_score=min_dense_score,
         min_bm25_score=min_bm25_score,
+        source_filter=source_filter,
     )
 
     yield {
@@ -286,20 +300,23 @@ def ask_rag(
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
     use_agent: bool = False,
     max_agent_steps: int = 3,
+    source_filter: list[str] | None = None,
 ) -> str:
-    return ask_rag_with_trace(
-        question,
-        top_k=top_k,
-        use_rerank=use_rerank,
-        history=history,
-        use_rewrite=use_rewrite,
-        use_guardrail=use_guardrail,
-        min_rerank_score=min_rerank_score,
-        min_dense_score=min_dense_score,
-        min_bm25_score=min_bm25_score,
-        use_agent=use_agent,
-        max_agent_steps=max_agent_steps,
-    )["answer"]
+    trace_kwargs = {
+        "top_k": top_k,
+        "use_rerank": use_rerank,
+        "history": history,
+        "use_rewrite": use_rewrite,
+        "use_guardrail": use_guardrail,
+        "min_rerank_score": min_rerank_score,
+        "min_dense_score": min_dense_score,
+        "min_bm25_score": min_bm25_score,
+        "use_agent": use_agent,
+        "max_agent_steps": max_agent_steps,
+    }
+    if source_filter is not None:
+        trace_kwargs["source_filter"] = source_filter
+    return ask_rag_with_trace(question, **trace_kwargs)["answer"]
 
 
 if __name__ == "__main__":

@@ -9,6 +9,10 @@ __pycache__
 .env.*
 !.env.example
 qdrant_data
+session_data/
+*.db
+*.db-wal
+*.db-shm
 tests
 eval
 .pytest_cache

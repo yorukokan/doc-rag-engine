@@ -2,7 +2,7 @@ import logging
 import re
 import threading
 from fastembed import TextEmbedding
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 from rank_bm25 import BM25Okapi
 
 logger = logging.getLogger(__name__)
@@ -58,17 +58,21 @@ def scroll_all_points(
     client,
     collection_name: str = COLLECTION_NAME,
     batch_size: int = 1000,
+    scroll_filter: models.Filter | None = None,
 ) -> list:
     """Koleksiyondaki tüm point'leri sayfalama ile eksiksiz çeker."""
     all_points = []
     offset = None
     while True:
-        batch, next_offset = client.scroll(
-            collection_name=collection_name,
-            limit=batch_size,
-            offset=offset,
-            with_payload=True,
-        )
+        scroll_kwargs = {
+            "collection_name": collection_name,
+            "limit": batch_size,
+            "offset": offset,
+            "with_payload": True,
+        }
+        if scroll_filter is not None:
+            scroll_kwargs["scroll_filter"] = scroll_filter
+        batch, next_offset = client.scroll(**scroll_kwargs)
         all_points.extend(batch)
         if next_offset is None:
             break
@@ -87,7 +91,22 @@ def search(
     rrf_k: int = 10,
     use_rerank: bool = False,
     candidate_k: int = 6,
+    source_filter: list[str] | None = None,
 ) -> list[dict]:
+    qdrant_filter = None
+    if source_filter is not None:
+        cleaned = [s.strip() for s in source_filter if isinstance(s, str) and s.strip()]
+        if not cleaned:
+            return []
+        qdrant_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="source",
+                    match=models.MatchAny(any=cleaned),
+                )
+            ]
+        )
+
     embedder = get_embedder()
     query_vector = list(embedder.embed([query]))[0].tolist()
 
@@ -97,13 +116,23 @@ def search(
             if not client.collection_exists(COLLECTION_NAME):
                 return []
             # 1. Vektör Araması (Anlamsal)
-            dense_response = client.query_points(
-                collection_name=COLLECTION_NAME,
-                query=query_vector,
-                limit=20,
-            )
+            query_kwargs = {
+                "collection_name": COLLECTION_NAME,
+                "query": query_vector,
+                "limit": 20,
+            }
+            if qdrant_filter is not None:
+                query_kwargs["query_filter"] = qdrant_filter
+            dense_response = client.query_points(**query_kwargs)
             # 2. BM25 için koleksiyondaki tüm kartları çek
-            all_points = scroll_all_points(client, COLLECTION_NAME)
+            if qdrant_filter is not None:
+                all_points = scroll_all_points(
+                    client,
+                    COLLECTION_NAME,
+                    scroll_filter=qdrant_filter,
+                )
+            else:
+                all_points = scroll_all_points(client, COLLECTION_NAME)
         finally:
             client.close()
 

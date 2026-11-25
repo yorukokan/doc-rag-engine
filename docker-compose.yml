@@ -2,11 +2,14 @@ services:
   api:
     build: .
     env_file: .env
+    environment:
+      SESSION_DB_PATH: /app/session_data/sessions.db
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
       - qdrant_data:/app/qdrant_data
+      - session_data:/app/session_data
       - model_cache:/app/.cache
     command: ["uvicorn", "api:app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
     healthcheck:
@@ -45,4 +48,5 @@ services:
 
 volumes:
   qdrant_data:
+  session_data:
   model_cache:

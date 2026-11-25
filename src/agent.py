@@ -188,6 +188,7 @@ def _prepare_agent_rag(
     llm_client=None,
     model_name: str | None = None,
     search_fn=None,
+    source_filter: list[str] | None = None,
 ) -> dict:
     """Planlama döngüsü, guardrail kontrolü ve sentez/sohbet mesajlarını hazırlar."""
     _validate_max_steps(max_steps)
@@ -216,10 +217,18 @@ def _prepare_agent_rag(
     search_count = 0
     direct_chat_triggered = False
 
-    def _run_fallback_search(step_idx: int, step_t0: float, thought: str) -> None:
+    def _run_fallback_search(
+        step_idx: int,
+        step_t0: float,
+        thought: str,
+        active_source_filter: list[str] | None = source_filter,
+    ) -> None:
         nonlocal merged_chunks, total_retrieval_ms, search_count
         s_t0 = time.perf_counter()
-        found = active_search(rewritten_query, top_k=top_k, use_rerank=use_rerank)
+        search_kwargs: dict = {"top_k": top_k, "use_rerank": use_rerank}
+        if active_source_filter is not None:
+            search_kwargs["source_filter"] = active_source_filter
+        found = active_search(rewritten_query, **search_kwargs)
         total_retrieval_ms += (time.perf_counter() - s_t0) * 1000
         merged_chunks = merge_and_deduplicate_chunks(
             merged_chunks,
@@ -360,7 +369,10 @@ def _prepare_agent_rag(
         seen_queries_ordered.append(clean_query)
 
         s_t0 = time.perf_counter()
-        found = active_search(clean_query, top_k=top_k, use_rerank=use_rerank)
+        search_kwargs: dict = {"top_k": top_k, "use_rerank": use_rerank}
+        if source_filter is not None:
+            search_kwargs["source_filter"] = source_filter
+        found = active_search(clean_query, **search_kwargs)
         total_retrieval_ms += (time.perf_counter() - s_t0) * 1000
         merged_chunks = merge_and_deduplicate_chunks(
             merged_chunks,
@@ -476,6 +488,7 @@ def run_agent_rag(
     llm_client=None,
     model_name: str | None = None,
     search_fn=None,
+    source_filter: list[str] | None = None,
 ) -> dict:
     """Saf Python sınırlı döngülü Agentic RAG yürütücüsü."""
     prep = _prepare_agent_rag(
@@ -492,6 +505,7 @@ def run_agent_rag(
         llm_client=llm_client,
         model_name=model_name,
         search_fn=search_fn,
+        source_filter=source_filter,
     )
 
     total_generation_ms = prep["planner_generation_ms"]
@@ -544,6 +558,7 @@ def run_agent_rag_stream(
     llm_client=None,
     model_name: str | None = None,
     search_fn=None,
+    source_filter: list[str] | None = None,
 ) -> Iterator[dict]:
     """Agentic RAG yürütücüsünün canlı akış (streaming) sürümü."""
     _validate_max_steps(max_steps)
@@ -563,6 +578,7 @@ def run_agent_rag_stream(
             llm_client=llm_client,
             model_name=model_name,
             search_fn=search_fn,
+            source_filter=source_filter,
         )
 
         total_generation_ms = prep["planner_generation_ms"]

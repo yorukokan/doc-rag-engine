@@ -318,8 +318,13 @@ class TestAgentRunAgentRagStream(unittest.TestCase):
 
 class TestApiAskStreamEndpoint(unittest.TestCase):
     def setUp(self):
-        api.session_store.clear_all()
+        self._orig_store = api.session_store
+        api.session_store = api.SessionStore(db_path=":memory:")
         self.client = TestClient(api.app)
+
+    def tearDown(self):
+        api.session_store.close()
+        api.session_store = self._orig_store
 
     def test_ask_stream_sse_format_and_session_recording(self):
         agent_step = {

@@ -134,6 +134,7 @@ def _build_ask_payload(
     min_bm25_score: float = 7.0,
     use_agent: bool = False,
     max_agent_steps: int = 3,
+    source_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "question": question,
@@ -150,6 +151,8 @@ def _build_ask_payload(
     if use_agent:
         payload["use_agent"] = True
         payload["max_agent_steps"] = max_agent_steps
+    if source_filter:
+        payload["source_filter"] = list(source_filter)
     return payload
 
 
@@ -201,6 +204,7 @@ def ask_question(
     client: httpx.Client | None = None,
     use_agent: bool = False,
     max_agent_steps: int = 3,
+    source_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     url = f"{_normalize_base_url(base_url)}/ask"
     payload = _build_ask_payload(
@@ -215,6 +219,7 @@ def ask_question(
         min_bm25_score=min_bm25_score,
         use_agent=use_agent,
         max_agent_steps=max_agent_steps,
+        source_filter=source_filter,
     )
 
     response = _send_request(
@@ -242,6 +247,7 @@ def ask_question_stream(
     client: httpx.Client | None = None,
     use_agent: bool = False,
     max_agent_steps: int = 3,
+    source_filter: list[str] | None = None,
 ) -> Iterator[dict[str, Any]]:
     url = f"{_normalize_base_url(base_url)}/ask/stream"
     payload = _build_ask_payload(
@@ -256,6 +262,7 @@ def ask_question_stream(
         min_bm25_score=min_bm25_score,
         use_agent=use_agent,
         max_agent_steps=max_agent_steps,
+        source_filter=source_filter,
     )
 
     client_ctx = (
@@ -328,6 +335,7 @@ def search_docs(
     base_url: str = DEFAULT_API_URL,
     timeout: float = 60.0,
     client: httpx.Client | None = None,
+    source_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     url = f"{_normalize_base_url(base_url)}/search"
     payload: dict[str, Any] = {
@@ -335,6 +343,8 @@ def search_docs(
         "top_k": top_k,
         "use_rerank": use_rerank,
     }
+    if source_filter:
+        payload["source_filter"] = list(source_filter)
     response = _send_request(
         "POST",
         url,
@@ -342,6 +352,35 @@ def search_docs(
         json_payload=payload,
         client=client,
     )
+    return _parse_json_object(response)
+
+
+def list_sessions(
+    limit: int = 50,
+    base_url: str = DEFAULT_API_BASE_URL,
+    timeout: float = 15.0,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    url = f"{_normalize_base_url(base_url)}/sessions"
+    response = _send_request(
+        "GET",
+        url,
+        timeout=timeout,
+        params={"limit": limit},
+        client=client,
+    )
+    return _parse_json_object(response)
+
+
+def get_session(
+    session_id: str,
+    base_url: str = DEFAULT_API_BASE_URL,
+    timeout: float = 15.0,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    safe_session_id = quote(session_id, safe="")
+    url = f"{_normalize_base_url(base_url)}/sessions/{safe_session_id}"
+    response = _send_request("GET", url, timeout=timeout, client=client)
     return _parse_json_object(response)
 
 

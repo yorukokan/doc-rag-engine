@@ -2,6 +2,7 @@ import json
 import re
 import time
 import warnings
+from collections.abc import Iterator
 
 from guardrail import (
     DEFAULT_MIN_BM25_SCORE,
@@ -168,7 +169,12 @@ def _format_planner_context(
     return "\n".join(lines)
 
 
-def run_agent_rag(
+def _validate_max_steps(max_steps: int) -> None:
+    if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 1:
+        raise ValueError("max_steps en az 1 olan bir tam sayı olmalıdır.")
+
+
+def _prepare_agent_rag(
     question: str,
     top_k: int = 3,
     use_rerank: bool = False,
@@ -183,9 +189,8 @@ def run_agent_rag(
     model_name: str | None = None,
     search_fn=None,
 ) -> dict:
-    """Saf Python sınırlı döngülü Agentic RAG yürütücüsü."""
-    if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 1:
-        raise ValueError("max_steps en az 1 olan bir tam sayı olmalıdır.")
+    """Planlama döngüsü, guardrail kontrolü ve sentez/sohbet mesajlarını hazırlar."""
+    _validate_max_steps(max_steps)
 
     active_client = client if llm_client is None else llm_client
     active_model = MODEL_NAME if model_name is None else model_name
@@ -380,24 +385,19 @@ def run_agent_rag(
             *(history or []),
             {"role": "user", "content": question},
         ]
-        c_t0 = time.perf_counter()
-        chat_resp = active_client.chat.completions.create(
-            model=active_model,
-            messages=chat_messages,
-            temperature=0.3,
-        )
-        total_generation_ms += (time.perf_counter() - c_t0) * 1000
-        answer = (chat_resp.choices[0].message.content or "") if chat_resp.choices else ""
         return {
-            "answer": answer,
+            "active_client": active_client,
+            "active_model": active_model,
             "chunks": [],
             "rewritten_query": rewritten_query,
             "rewrite_ms": round(rewrite_ms, 1),
             "retrieval_ms": 0.0,
-            "generation_ms": round(total_generation_ms, 1),
+            "planner_generation_ms": total_generation_ms,
             "early_rejected": False,
             "rejection_reason": None,
             "agent_steps": agent_steps,
+            "messages": chat_messages,
+            "temperature": 0.3,
         }
 
     final_limit = top_k * 2 if search_count > 1 else top_k
@@ -413,15 +413,18 @@ def run_agent_rag(
         )
         if not passed:
             return {
-                "answer": REFUSAL_MESSAGE,
+                "active_client": active_client,
+                "active_model": active_model,
                 "chunks": final_chunks,
                 "rewritten_query": rewritten_query,
                 "rewrite_ms": round(rewrite_ms, 1),
                 "retrieval_ms": round(total_retrieval_ms, 1),
-                "generation_ms": round(total_generation_ms, 1),
+                "planner_generation_ms": total_generation_ms,
                 "early_rejected": True,
                 "rejection_reason": rejection_reason,
                 "agent_steps": agent_steps,
+                "messages": None,
+                "temperature": None,
             }
 
     context_parts = [
@@ -443,23 +446,169 @@ SORU: {question}
         {"role": "user", "content": user_prompt},
     ]
 
+    return {
+        "active_client": active_client,
+        "active_model": active_model,
+        "chunks": final_chunks,
+        "rewritten_query": rewritten_query,
+        "rewrite_ms": round(rewrite_ms, 1),
+        "retrieval_ms": round(total_retrieval_ms, 1),
+        "planner_generation_ms": total_generation_ms,
+        "early_rejected": False,
+        "rejection_reason": None,
+        "agent_steps": agent_steps,
+        "messages": messages,
+        "temperature": 0.1,
+    }
+
+
+def run_agent_rag(
+    question: str,
+    top_k: int = 3,
+    use_rerank: bool = False,
+    history: list[dict] | None = None,
+    use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
+    min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
+    min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    max_steps: int = 3,
+    llm_client=None,
+    model_name: str | None = None,
+    search_fn=None,
+) -> dict:
+    """Saf Python sınırlı döngülü Agentic RAG yürütücüsü."""
+    prep = _prepare_agent_rag(
+        question=question,
+        top_k=top_k,
+        use_rerank=use_rerank,
+        history=history,
+        use_rewrite=use_rewrite,
+        use_guardrail=use_guardrail,
+        min_rerank_score=min_rerank_score,
+        min_dense_score=min_dense_score,
+        min_bm25_score=min_bm25_score,
+        max_steps=max_steps,
+        llm_client=llm_client,
+        model_name=model_name,
+        search_fn=search_fn,
+    )
+
+    total_generation_ms = prep["planner_generation_ms"]
+    if prep["early_rejected"]:
+        return {
+            "answer": REFUSAL_MESSAGE,
+            "chunks": prep["chunks"],
+            "rewritten_query": prep["rewritten_query"],
+            "rewrite_ms": prep["rewrite_ms"],
+            "retrieval_ms": prep["retrieval_ms"],
+            "generation_ms": round(total_generation_ms, 1),
+            "early_rejected": True,
+            "rejection_reason": prep["rejection_reason"],
+            "agent_steps": prep["agent_steps"],
+        }
+
     syn_t0 = time.perf_counter()
-    response = active_client.chat.completions.create(
-        model=active_model,
-        messages=messages,
-        temperature=0.1,
+    response = prep["active_client"].chat.completions.create(
+        model=prep["active_model"],
+        messages=prep["messages"],
+        temperature=prep["temperature"],
     )
     total_generation_ms += (time.perf_counter() - syn_t0) * 1000
     answer = (response.choices[0].message.content or "") if response.choices else ""
 
     return {
         "answer": answer,
-        "chunks": final_chunks,
-        "rewritten_query": rewritten_query,
-        "rewrite_ms": round(rewrite_ms, 1),
-        "retrieval_ms": round(total_retrieval_ms, 1),
+        "chunks": prep["chunks"],
+        "rewritten_query": prep["rewritten_query"],
+        "rewrite_ms": prep["rewrite_ms"],
+        "retrieval_ms": prep["retrieval_ms"],
         "generation_ms": round(total_generation_ms, 1),
         "early_rejected": False,
         "rejection_reason": None,
-        "agent_steps": agent_steps,
+        "agent_steps": prep["agent_steps"],
     }
+
+
+def run_agent_rag_stream(
+    question: str,
+    top_k: int = 3,
+    use_rerank: bool = False,
+    history: list[dict] | None = None,
+    use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
+    min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
+    min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    max_steps: int = 3,
+    llm_client=None,
+    model_name: str | None = None,
+    search_fn=None,
+) -> Iterator[dict]:
+    """Agentic RAG yürütücüsünün canlı akış (streaming) sürümü."""
+    _validate_max_steps(max_steps)
+
+    def _stream() -> Iterator[dict]:
+        prep = _prepare_agent_rag(
+            question=question,
+            top_k=top_k,
+            use_rerank=use_rerank,
+            history=history,
+            use_rewrite=use_rewrite,
+            use_guardrail=use_guardrail,
+            min_rerank_score=min_rerank_score,
+            min_dense_score=min_dense_score,
+            min_bm25_score=min_bm25_score,
+            max_steps=max_steps,
+            llm_client=llm_client,
+            model_name=model_name,
+            search_fn=search_fn,
+        )
+
+        total_generation_ms = prep["planner_generation_ms"]
+        yield {
+            "type": "meta",
+            "chunks": prep["chunks"],
+            "rewritten_query": prep["rewritten_query"],
+            "rewrite_ms": prep["rewrite_ms"],
+            "retrieval_ms": prep["retrieval_ms"],
+            "early_rejected": prep["early_rejected"],
+            "rejection_reason": prep["rejection_reason"],
+            "agent_steps": prep["agent_steps"],
+        }
+
+        if prep["early_rejected"]:
+            yield {"type": "token", "content": REFUSAL_MESSAGE}
+            yield {
+                "type": "done",
+                "answer": REFUSAL_MESSAGE,
+                "generation_ms": round(total_generation_ms, 1),
+            }
+            return
+
+        syn_t0 = time.perf_counter()
+        stream = prep["active_client"].chat.completions.create(
+            model=prep["active_model"],
+            messages=prep["messages"],
+            temperature=prep["temperature"],
+            stream=True,
+        )
+        answer_parts: list[str] = []
+        for chunk in stream:
+            choices = getattr(chunk, "choices", None)
+            if not choices:
+                continue
+            delta = getattr(choices[0], "delta", None)
+            content = getattr(delta, "content", None) if delta is not None else None
+            if content:
+                answer_parts.append(content)
+                yield {"type": "token", "content": content}
+        total_generation_ms += (time.perf_counter() - syn_t0) * 1000
+
+        yield {
+            "type": "done",
+            "answer": "".join(answer_parts),
+            "generation_ms": round(total_generation_ms, 1),
+        }
+
+    return _stream()

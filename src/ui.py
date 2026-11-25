@@ -14,6 +14,7 @@ from ui_client import (
     ApiClientError,
     DEFAULT_API_URL,
     ask_question,
+    ask_question_stream,
     check_health,
     delete_session,
     search_docs,
@@ -673,6 +674,12 @@ def _render_sidebar() -> dict[str, Any]:
                 value=3,
                 help="Ajanın yanıt üretmeden önce atabileceği en fazla araştırma/karar adımı.",
             )
+        use_stream = st.toggle(
+            "⚡ Canlı Akış (Streaming)",
+            value=True,
+            disabled=is_search_only,
+            help="Yanıt üretilirken kelime kelime canlı olarak akar.",
+        )
 
         with st.expander("Gelişmiş Eşik Ayarları", expanded=False):
             thresholds_disabled = is_search_only or not use_guardrail
@@ -741,6 +748,7 @@ def _render_sidebar() -> dict[str, Any]:
         "use_guardrail": use_guardrail,
         "use_agent": bool(use_agent and not is_search_only),
         "max_agent_steps": int(max_agent_steps),
+        "use_stream": use_stream,
         "min_rerank_score": float(min_rerank_score),
         "min_dense_score": float(min_dense_score),
         "min_bm25_score": float(min_bm25_score),
@@ -775,6 +783,122 @@ def _render_empty_state(mode: str) -> None:
                 st.rerun()
 
 
+def _handle_streaming_chat(cleaned_prompt: str, config: dict[str, Any]) -> None:
+    with st.chat_message("assistant"):
+        status_placeholder = st.empty()
+        badge_placeholder = st.empty()
+        text_placeholder = st.empty()
+
+        status_text = (
+            "🤖 Ajan soruyu analiz ediyor ve adım adım araştırıyor..."
+            if config.get("use_agent")
+            else "🔎 Dokümanlar taranıyor ve yanıt hazırlanıyor..."
+        )
+        status_placeholder.info(status_text)
+
+        meta_data: dict[str, Any] = {}
+        full_answer = ""
+        done_received = False
+
+        try:
+            stream = ask_question_stream(
+                question=cleaned_prompt,
+                session_id=st.session_state.session_id,
+                top_k=config["top_k"],
+                use_rerank=config["use_rerank"],
+                use_rewrite=config["use_rewrite"],
+                use_guardrail=config["use_guardrail"],
+                use_agent=config["use_agent"],
+                max_agent_steps=config["max_agent_steps"],
+                min_rerank_score=config["min_rerank_score"],
+                min_dense_score=config["min_dense_score"],
+                min_bm25_score=config["min_bm25_score"],
+                base_url=config["api_url"],
+            )
+
+            for item in stream:
+                event_type = item.get("event")
+                data = item.get("data") or {}
+
+                if event_type == "meta":
+                    meta_data = data
+                    status_placeholder.empty()
+                    if meta_data.get("early_rejected"):
+                        badge_placeholder.markdown(
+                            '<div class="guardrail-tag">🛡️ Erken Reddetme Kapısı Tetiklendi — LLM Atlandı</div>',
+                            unsafe_allow_html=True,
+                        )
+                elif event_type == "token":
+                    token_content = str(data.get("content") or "")
+                    if token_content:
+                        full_answer += token_content
+                        text_placeholder.markdown(full_answer + "▌")
+                elif event_type == "done":
+                    done_received = True
+                    status_placeholder.empty()
+                    final_answer = (
+                        str(data.get("answer"))
+                        if data.get("answer") is not None
+                        else full_answer
+                    )
+                    text_placeholder.markdown(final_answer)
+
+                    stream_session_id = meta_data.get("session_id")
+                    if stream_session_id:
+                        st.session_state.session_id = stream_session_id
+
+                    assistant_msg: dict[str, Any] = {
+                        "role": "assistant",
+                        "mode": "chat",
+                        "content": final_answer,
+                        "original_query": cleaned_prompt,
+                        "rewritten_query": meta_data.get("rewritten_query", cleaned_prompt),
+                        "early_rejected": bool(meta_data.get("early_rejected", False)),
+                        "rejection_reason": meta_data.get("rejection_reason"),
+                        "agent_steps": meta_data.get("agent_steps") or [],
+                        "chunks": meta_data.get("chunks", []),
+                        "timings": data.get("timings") or meta_data.get("timings") or {},
+                    }
+                    st.session_state.messages.append(assistant_msg)
+                    _render_chat_observability(assistant_msg)
+                    break
+
+            if not done_received:
+                status_placeholder.empty()
+                badge_placeholder.empty()
+                text_placeholder.empty()
+                assistant_msg = {
+                    "role": "assistant",
+                    "mode": "error",
+                    "error": "API akışı tamamlanmadan sunucu bağlantısı sonlandı.",
+                }
+                st.session_state.messages.append(assistant_msg)
+                st.error(assistant_msg["error"])
+
+        except ApiClientError as exc:
+            status_placeholder.empty()
+            badge_placeholder.empty()
+            text_placeholder.empty()
+            assistant_msg = {
+                "role": "assistant",
+                "mode": "error",
+                "error": f"API isteği başarısız oldu: {exc}",
+            }
+            st.session_state.messages.append(assistant_msg)
+            st.error(assistant_msg["error"])
+        except Exception as exc:
+            status_placeholder.empty()
+            badge_placeholder.empty()
+            text_placeholder.empty()
+            assistant_msg = {
+                "role": "assistant",
+                "mode": "error",
+                "error": f"Beklenmeyen bir hata oluştu: {exc}",
+            }
+            st.session_state.messages.append(assistant_msg)
+            st.error(assistant_msg["error"])
+
+
 def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
     cleaned_prompt = prompt.strip()
     if not cleaned_prompt:
@@ -788,6 +912,10 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
     }
     st.session_state.messages.append(user_msg)
     _render_message(user_msg)
+
+    if mode == MODE_CHAT and config.get("use_stream", True):
+        _handle_streaming_chat(cleaned_prompt, config)
+        return
 
     with st.chat_message("assistant"):
         if mode == MODE_CHAT and config.get("use_agent"):

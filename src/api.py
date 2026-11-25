@@ -5,6 +5,7 @@ SRC_DIR = str(Path(__file__).resolve().parent)
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+import json
 import logging
 import os
 import re
@@ -12,12 +13,14 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Iterator
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from generator import ask_rag_with_trace
+from generator import ask_rag_stream, ask_rag_with_trace
 from guardrail import (
     DEFAULT_MIN_BM25_SCORE,
     DEFAULT_MIN_DENSE_SCORE,
@@ -296,6 +299,96 @@ def ask(req: AskRequest) -> AskResponse:
             generation_ms=float(trace.get("generation_ms", 0.0)),
         ),
         agent_steps=[AgentStep(**s) for s in (trace.get("agent_steps") or [])],
+    )
+
+
+def _format_sse_event(event: str, data: dict) -> str:
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+@app.post("/ask/stream")
+def ask_stream(req: AskRequest) -> StreamingResponse:
+    session_id = req.session_id or uuid.uuid4().hex
+    history = session_store.get_history(session_id)
+
+    def event_generator() -> Iterator[str]:
+        early_rejected = False
+        rewrite_ms = 0.0
+        retrieval_ms = 0.0
+
+        try:
+            for item in ask_rag_stream(
+                question=req.question,
+                top_k=req.top_k,
+                use_rerank=req.use_rerank,
+                history=history,
+                use_rewrite=req.use_rewrite,
+                use_guardrail=req.use_guardrail,
+                min_rerank_score=req.min_rerank_score,
+                min_dense_score=req.min_dense_score,
+                min_bm25_score=req.min_bm25_score,
+                use_agent=req.use_agent,
+                max_agent_steps=req.max_agent_steps,
+            ):
+                event_type = item.get("type")
+                if event_type == "meta":
+                    early_rejected = bool(item.get("early_rejected", False))
+                    rewrite_ms = float(item.get("rewrite_ms", 0.0))
+                    retrieval_ms = float(item.get("retrieval_ms", 0.0))
+                    meta_payload = {
+                        "session_id": session_id,
+                        "rewritten_query": item["rewritten_query"],
+                        "early_rejected": early_rejected,
+                        "rejection_reason": item.get("rejection_reason"),
+                        "chunks": [
+                            ChunkResult(**chunk).model_dump()
+                            for chunk in item.get("chunks", [])
+                        ],
+                        "agent_steps": [
+                            AgentStep(**step).model_dump()
+                            for step in (item.get("agent_steps") or [])
+                        ],
+                        "timings": {
+                            "rewrite_ms": rewrite_ms,
+                            "retrieval_ms": retrieval_ms,
+                            "generation_ms": 0.0,
+                        },
+                    }
+                    yield _format_sse_event("meta", meta_payload)
+                elif event_type == "token":
+                    yield _format_sse_event("token", {"content": item["content"]})
+                elif event_type == "done":
+                    full_answer = item["answer"]
+                    generation_ms = float(item.get("generation_ms", 0.0))
+                    if not early_rejected:
+                        session_store.record_turn(session_id, req.question, full_answer)
+                    done_payload = {
+                        "answer": full_answer,
+                        "timings": {
+                            "rewrite_ms": rewrite_ms,
+                            "retrieval_ms": retrieval_ms,
+                            "generation_ms": generation_ms,
+                        },
+                    }
+                    yield _format_sse_event("done", done_payload)
+        except Exception:
+            logger.exception(
+                "POST /ask/stream sırasında beklenmeyen hata oluştu (session_id=%s)",
+                session_id,
+            )
+            yield _format_sse_event(
+                "error",
+                {"detail": "Yanıt üretilirken bir sunucu hatası oluştu."},
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

@@ -1,6 +1,7 @@
 import time
+from collections.abc import Iterator
 
-from agent import run_agent_rag
+from agent import run_agent_rag, run_agent_rag_stream
 from guardrail import (
     DEFAULT_MIN_BM25_SCORE,
     DEFAULT_MIN_DENSE_SCORE,
@@ -13,7 +14,7 @@ from retriever import search
 from rewriter import rewrite_query
 
 
-def ask_rag_with_trace(
+def _prepare_standard_rag(
     question: str,
     top_k: int = 3,
     use_rerank: bool = False,
@@ -23,26 +24,7 @@ def ask_rag_with_trace(
     min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
     min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
-    use_agent: bool = False,
-    max_agent_steps: int = 3,
 ) -> dict:
-    if use_agent:
-        return run_agent_rag(
-            question=question,
-            top_k=top_k,
-            use_rerank=use_rerank,
-            history=history,
-            use_rewrite=use_rewrite,
-            use_guardrail=use_guardrail,
-            min_rerank_score=min_rerank_score,
-            min_dense_score=min_dense_score,
-            min_bm25_score=min_bm25_score,
-            max_steps=max_agent_steps,
-            llm_client=client,
-            model_name=MODEL_NAME,
-            search_fn=search,
-        )
-
     # 1. Sohbet geçmişi varsa ve rewrite açıksa takip sorusunu bağımsız arama sorgusuna çevir
     if use_rewrite and history:
         rewritten_query, rewrite_ms = rewrite_query(
@@ -71,15 +53,14 @@ def ask_rag_with_trace(
         )
         if not passed:
             return {
-                "answer": REFUSAL_MESSAGE,
                 "chunks": retrieved_chunks,
                 "rewritten_query": rewritten_query,
                 "rewrite_ms": rewrite_ms,
                 "retrieval_ms": retrieval_ms,
-                "generation_ms": 0.0,
                 "early_rejected": True,
                 "rejection_reason": rejection_reason,
                 "agent_steps": [],
+                "messages": None,
             }
 
     # 3. Bulunan kartları LLM'in okuyabileceği düzenli bir metne çevir
@@ -114,11 +95,78 @@ SORU: {question}
         {"role": "user", "content": user_prompt},
     ]
 
+    return {
+        "chunks": retrieved_chunks,
+        "rewritten_query": rewritten_query,
+        "rewrite_ms": rewrite_ms,
+        "retrieval_ms": retrieval_ms,
+        "early_rejected": False,
+        "rejection_reason": None,
+        "agent_steps": [],
+        "messages": messages,
+    }
+
+
+def ask_rag_with_trace(
+    question: str,
+    top_k: int = 3,
+    use_rerank: bool = False,
+    history: list[dict] | None = None,
+    use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
+    min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
+    min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
+) -> dict:
+    if use_agent:
+        return run_agent_rag(
+            question=question,
+            top_k=top_k,
+            use_rerank=use_rerank,
+            history=history,
+            use_rewrite=use_rewrite,
+            use_guardrail=use_guardrail,
+            min_rerank_score=min_rerank_score,
+            min_dense_score=min_dense_score,
+            min_bm25_score=min_bm25_score,
+            max_steps=max_agent_steps,
+            llm_client=client,
+            model_name=MODEL_NAME,
+            search_fn=search,
+        )
+
+    prep = _prepare_standard_rag(
+        question=question,
+        top_k=top_k,
+        use_rerank=use_rerank,
+        history=history,
+        use_rewrite=use_rewrite,
+        use_guardrail=use_guardrail,
+        min_rerank_score=min_rerank_score,
+        min_dense_score=min_dense_score,
+        min_bm25_score=min_bm25_score,
+    )
+
+    if prep["early_rejected"]:
+        return {
+            "answer": REFUSAL_MESSAGE,
+            "chunks": prep["chunks"],
+            "rewritten_query": prep["rewritten_query"],
+            "rewrite_ms": prep["rewrite_ms"],
+            "retrieval_ms": prep["retrieval_ms"],
+            "generation_ms": 0.0,
+            "early_rejected": True,
+            "rejection_reason": prep["rejection_reason"],
+            "agent_steps": [],
+        }
+
     # 5. LLM'e isteği at ve yanıt süresini ölç
     t1 = time.perf_counter()
     response = client.chat.completions.create(
         model=MODEL_NAME,
-        messages=messages,
+        messages=prep["messages"],
         temperature=0.1,  # 0.1 = Yaratıcılığı kıs, sadece metne sadık kal
     )
     generation_ms = round((time.perf_counter() - t1) * 1000, 1)
@@ -126,14 +174,103 @@ SORU: {question}
 
     return {
         "answer": answer,
-        "chunks": retrieved_chunks,
-        "retrieval_ms": retrieval_ms,
+        "chunks": prep["chunks"],
+        "retrieval_ms": prep["retrieval_ms"],
         "generation_ms": generation_ms,
-        "rewritten_query": rewritten_query,
-        "rewrite_ms": rewrite_ms,
+        "rewritten_query": prep["rewritten_query"],
+        "rewrite_ms": prep["rewrite_ms"],
         "early_rejected": False,
         "rejection_reason": None,
         "agent_steps": [],
+    }
+
+
+def ask_rag_stream(
+    question: str,
+    top_k: int = 3,
+    use_rerank: bool = False,
+    history: list[dict] | None = None,
+    use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
+    min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
+    min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
+) -> Iterator[dict]:
+    if use_agent:
+        yield from run_agent_rag_stream(
+            question=question,
+            top_k=top_k,
+            use_rerank=use_rerank,
+            history=history,
+            use_rewrite=use_rewrite,
+            use_guardrail=use_guardrail,
+            min_rerank_score=min_rerank_score,
+            min_dense_score=min_dense_score,
+            min_bm25_score=min_bm25_score,
+            max_steps=max_agent_steps,
+            llm_client=client,
+            model_name=MODEL_NAME,
+            search_fn=search,
+        )
+        return
+
+    prep = _prepare_standard_rag(
+        question=question,
+        top_k=top_k,
+        use_rerank=use_rerank,
+        history=history,
+        use_rewrite=use_rewrite,
+        use_guardrail=use_guardrail,
+        min_rerank_score=min_rerank_score,
+        min_dense_score=min_dense_score,
+        min_bm25_score=min_bm25_score,
+    )
+
+    yield {
+        "type": "meta",
+        "chunks": prep["chunks"],
+        "rewritten_query": prep["rewritten_query"],
+        "rewrite_ms": prep["rewrite_ms"],
+        "retrieval_ms": prep["retrieval_ms"],
+        "early_rejected": prep["early_rejected"],
+        "rejection_reason": prep["rejection_reason"],
+        "agent_steps": [],
+    }
+
+    if prep["early_rejected"]:
+        yield {"type": "token", "content": REFUSAL_MESSAGE}
+        yield {
+            "type": "done",
+            "answer": REFUSAL_MESSAGE,
+            "generation_ms": 0.0,
+        }
+        return
+
+    t1 = time.perf_counter()
+    stream = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=prep["messages"],
+        temperature=0.1,
+        stream=True,
+    )
+    answer_parts: list[str] = []
+    for chunk in stream:
+        choices = getattr(chunk, "choices", None)
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        content = getattr(delta, "content", None) if delta is not None else None
+        if content:
+            answer_parts.append(content)
+            yield {"type": "token", "content": content}
+    generation_ms = round((time.perf_counter() - t1) * 1000, 1)
+
+    yield {
+        "type": "done",
+        "answer": "".join(answer_parts),
+        "generation_ms": generation_ms,
     }
 
 

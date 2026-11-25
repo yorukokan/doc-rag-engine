@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import json
+from collections.abc import Iterator
 from typing import Any
 from urllib.parse import quote
 
@@ -104,6 +107,70 @@ def check_health(
     return _parse_json_object(response)
 
 
+def _build_ask_payload(
+    question: str,
+    session_id: str | None = None,
+    top_k: int = 3,
+    use_rerank: bool = True,
+    use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = -3.0,
+    min_dense_score: float = 0.45,
+    min_bm25_score: float = 7.0,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "question": question,
+        "top_k": top_k,
+        "use_rerank": use_rerank,
+        "use_rewrite": use_rewrite,
+        "use_guardrail": use_guardrail,
+        "min_rerank_score": min_rerank_score,
+        "min_dense_score": min_dense_score,
+        "min_bm25_score": min_bm25_score,
+    }
+    if session_id is not None:
+        payload["session_id"] = session_id
+    if use_agent:
+        payload["use_agent"] = True
+        payload["max_agent_steps"] = max_agent_steps
+    return payload
+
+
+def _parse_sse_block(
+    event_name: str | None,
+    data_lines: list[str],
+    status_code: int,
+) -> dict[str, Any]:
+    raw_data = "\n".join(data_lines)
+    try:
+        parsed = json.loads(raw_data)
+    except ValueError as exc:
+        raise ApiClientError(
+            "API akış yanıtı geçerli JSON formatında değil.",
+            status_code=status_code,
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise ApiClientError(
+            "API akış yanıtı beklenen JSON nesnesi formatında değil.",
+            status_code=status_code,
+        )
+
+    resolved_event = event_name or "message"
+    if resolved_event == "error":
+        detail = parsed.get("detail")
+        message = (
+            detail.strip()
+            if isinstance(detail, str) and detail.strip()
+            else "Yanıt üretilirken bir sunucu hatası oluştu."
+        )
+        raise ApiClientError(message, status_code=502)
+
+    return {"event": resolved_event, "data": parsed}
+
+
 def ask_question(
     question: str,
     session_id: str | None = None,
@@ -121,21 +188,19 @@ def ask_question(
     max_agent_steps: int = 3,
 ) -> dict[str, Any]:
     url = f"{_normalize_base_url(base_url)}/ask"
-    payload: dict[str, Any] = {
-        "question": question,
-        "top_k": top_k,
-        "use_rerank": use_rerank,
-        "use_rewrite": use_rewrite,
-        "use_guardrail": use_guardrail,
-        "min_rerank_score": min_rerank_score,
-        "min_dense_score": min_dense_score,
-        "min_bm25_score": min_bm25_score,
-    }
-    if session_id is not None:
-        payload["session_id"] = session_id
-    if use_agent:
-        payload["use_agent"] = True
-        payload["max_agent_steps"] = max_agent_steps
+    payload = _build_ask_payload(
+        question=question,
+        session_id=session_id,
+        top_k=top_k,
+        use_rerank=use_rerank,
+        use_rewrite=use_rewrite,
+        use_guardrail=use_guardrail,
+        min_rerank_score=min_rerank_score,
+        min_dense_score=min_dense_score,
+        min_bm25_score=min_bm25_score,
+        use_agent=use_agent,
+        max_agent_steps=max_agent_steps,
+    )
 
     response = _send_request(
         "POST",
@@ -145,6 +210,100 @@ def ask_question(
         client=client,
     )
     return _parse_json_object(response)
+
+
+def ask_question_stream(
+    question: str,
+    session_id: str | None = None,
+    top_k: int = 3,
+    use_rerank: bool = True,
+    use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = -3.0,
+    min_dense_score: float = 0.45,
+    min_bm25_score: float = 7.0,
+    base_url: str = DEFAULT_API_URL,
+    timeout: float = 120.0,
+    client: httpx.Client | None = None,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
+) -> Iterator[dict[str, Any]]:
+    url = f"{_normalize_base_url(base_url)}/ask/stream"
+    payload = _build_ask_payload(
+        question=question,
+        session_id=session_id,
+        top_k=top_k,
+        use_rerank=use_rerank,
+        use_rewrite=use_rewrite,
+        use_guardrail=use_guardrail,
+        min_rerank_score=min_rerank_score,
+        min_dense_score=min_dense_score,
+        min_bm25_score=min_bm25_score,
+        use_agent=use_agent,
+        max_agent_steps=max_agent_steps,
+    )
+
+    client_ctx = (
+        contextlib.nullcontext(client)
+        if client is not None
+        else httpx.Client(timeout=timeout)
+    )
+
+    try:
+        with client_ctx as http_client:
+            with http_client.stream(
+                "POST",
+                url,
+                json=payload,
+                timeout=timeout,
+            ) as response:
+                if response.status_code >= 400:
+                    response.read()
+                    raise ApiClientError(
+                        _extract_error_detail(response),
+                        status_code=response.status_code,
+                    )
+
+                current_event: str | None = None
+                data_lines: list[str] = []
+
+                for line in response.iter_lines():
+                    if line == "":
+                        if data_lines:
+                            yield _parse_sse_block(
+                                current_event,
+                                data_lines,
+                                response.status_code,
+                            )
+                        current_event = None
+                        data_lines = []
+                        continue
+
+                    if line.startswith(":"):
+                        continue
+
+                    if line.startswith("event:"):
+                        current_event = line[6:].strip()
+                    elif line.startswith("data:"):
+                        value = line[5:]
+                        if value.startswith(" "):
+                            value = value[1:]
+                        data_lines.append(value)
+
+                if data_lines:
+                    yield _parse_sse_block(
+                        current_event,
+                        data_lines,
+                        response.status_code,
+                    )
+    except httpx.ConnectError as exc:
+        raise ApiClientError(
+            "FastAPI sunucusuna bağlanılamadı. Sunucunun çalıştığından emin olun."
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise ApiClientError("API isteği zaman aşımına uğradı.") from exc
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"API isteği sırasında ağ hatası oluştu: {exc}") from exc
 
 
 def search_docs(

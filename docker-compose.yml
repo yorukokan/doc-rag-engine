@@ -1,0 +1,48 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - qdrant_data:/app/qdrant_data
+      - model_cache:/app/.cache
+    command: ["uvicorn", "api:app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  ui:
+    build: .
+    environment:
+      RAG_API_URL: "http://api:8000"
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["streamlit", "run", "src/ui.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+    restart: unless-stopped
+
+  # NOT: indexer servisi yerel qdrant_data kilidini kullanır.
+  # api servisi çalışırken aynı anda qdrant_data kilidine erişim çakışması yaşanabileceğinden,
+  # indexer'ı ilk kurulumda veya api servisi durdurulmuşken çalıştırın:
+  #   docker compose --profile tools run --rm indexer
+  indexer:
+    build: .
+    profiles: ["tools"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - qdrant_data:/app/qdrant_data
+      - model_cache:/app/.cache
+    command: ["python", "src/indexer.py"]
+
+volumes:
+  qdrant_data:
+  model_cache:

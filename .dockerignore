@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example
+qdrant_data
+tests
+eval
+.pytest_cache
+.ruff_cache
+.DS_Store
+*.log

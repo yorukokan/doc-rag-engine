@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
-DEFAULT_API_URL = "http://127.0.0.1:8000"
+DEFAULT_API_URL = (
+    os.getenv("RAG_API_URL", "http://127.0.0.1:8000").strip().rstrip("/")
+    or "http://127.0.0.1:8000"
+)
 DEFAULT_API_BASE_URL = DEFAULT_API_URL
 
 

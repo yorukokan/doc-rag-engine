@@ -1,7 +1,10 @@
+import importlib.util
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -302,6 +305,41 @@ class TestDeleteSession(unittest.TestCase):
 
         self.assertIsNone(ctx.exception.status_code)
         self.assertIn("FastAPI sunucusuna bağlanılamadı", str(ctx.exception))
+
+
+class TestDefaultApiUrlEnv(unittest.TestCase):
+    @staticmethod
+    def _load_ui_client_isolated():
+        module_path = Path(SRC_DIR) / "ui_client.py"
+        spec = importlib.util.spec_from_file_location("_ui_client_env_test", module_path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_default_api_url_uses_fallback_when_env_unset(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RAG_API_URL", None)
+            module = self._load_ui_client_isolated()
+
+        self.assertEqual(module.DEFAULT_API_URL, "http://127.0.0.1:8000")
+        self.assertEqual(module.DEFAULT_API_BASE_URL, "http://127.0.0.1:8000")
+
+    def test_default_api_url_reads_and_normalizes_env_var(self):
+        with patch.dict(os.environ, {"RAG_API_URL": "  http://api:8000///  "}, clear=False):
+            module = self._load_ui_client_isolated()
+
+        self.assertEqual(module.DEFAULT_API_URL, "http://api:8000")
+        self.assertEqual(module.DEFAULT_API_BASE_URL, "http://api:8000")
+
+    def test_default_api_url_falls_back_when_env_is_blank_or_slashes(self):
+        for raw_value in ("", "   ", "///"):
+            with self.subTest(raw_value=raw_value):
+                with patch.dict(os.environ, {"RAG_API_URL": raw_value}, clear=False):
+                    module = self._load_ui_client_isolated()
+
+                self.assertEqual(module.DEFAULT_API_URL, "http://127.0.0.1:8000")
+                self.assertEqual(module.DEFAULT_API_BASE_URL, "http://127.0.0.1:8000")
 
 
 if __name__ == "__main__":

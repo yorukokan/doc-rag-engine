@@ -1,8 +1,13 @@
 import argparse
 import time
-from retriever import search
 from generator import ask_rag_with_trace
+from guardrail import (
+    DEFAULT_MIN_BM25_SCORE,
+    DEFAULT_MIN_DENSE_SCORE,
+    DEFAULT_MIN_RERANK_SCORE,
+)
 from memory import ConversationMemory
+from retriever import search
 
 
 def print_xray(
@@ -12,6 +17,8 @@ def print_xray(
     rewrite_ms: float | None = None,
     original_query: str | None = None,
     rewritten_query: str | None = None,
+    early_rejected: bool = False,
+    rejection_reason: str | None = None,
 ):
     print("\n--- RÖNTGEN (OBSERVABILITY) ---")
     if (
@@ -20,6 +27,9 @@ def print_xray(
         and rewritten_query.strip() != original_query.strip()
     ):
         print(f"Yeniden Yazılan Sorgu: {rewritten_query}")
+
+    if early_rejected:
+        print(f"Guardrail -> ERKEN REDDETME (LLM atlandı): {rejection_reason}")
 
     if generation_ms is not None:
         if rewrite_ms is not None:
@@ -76,6 +86,10 @@ def handle_question(
     use_rerank: bool,
     memory: ConversationMemory | None = None,
     use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
+    min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
+    min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
 ):
     if search_only:
         t0 = time.perf_counter()
@@ -91,6 +105,10 @@ def handle_question(
         use_rerank=use_rerank,
         history=history,
         use_rewrite=use_rewrite,
+        use_guardrail=use_guardrail,
+        min_rerank_score=min_rerank_score,
+        min_dense_score=min_dense_score,
+        min_bm25_score=min_bm25_score,
     )
     if debug:
         print_xray(
@@ -100,10 +118,12 @@ def handle_question(
             rewrite_ms=trace["rewrite_ms"],
             original_query=question,
             rewritten_query=trace["rewritten_query"],
+            early_rejected=trace.get("early_rejected", False),
+            rejection_reason=trace.get("rejection_reason"),
         )
 
     print(f"\nCEVAP:\n{trace['answer']}\n")
-    if memory is not None:
+    if memory is not None and not trace.get("early_rejected", False):
         memory.add_turn(question, trace["answer"])
 
 
@@ -115,6 +135,25 @@ def main():
     parser.add_argument("--top-k", type=int, default=3, help="Getirilecek bilgi kartı sayısı (varsayılan: 3)")
     parser.add_argument("--query", type=str, help="Tek seferlik soru sor ve çık")
     parser.add_argument("--no-rewrite", action="store_true", help="Takip sorularında query rewriting'i devre dışı bırak")
+    parser.add_argument("--no-guardrail", action="store_true", help="Erken reddetme kapısını (guardrail) devre dışı bırak")
+    parser.add_argument(
+        "--min-rerank-score",
+        type=float,
+        default=DEFAULT_MIN_RERANK_SCORE,
+        help=f"Guardrail rerank eşik değeri (varsayılan: {DEFAULT_MIN_RERANK_SCORE})",
+    )
+    parser.add_argument(
+        "--min-dense-score",
+        type=float,
+        default=DEFAULT_MIN_DENSE_SCORE,
+        help=f"Guardrail dense cosine eşik değeri (varsayılan: {DEFAULT_MIN_DENSE_SCORE})",
+    )
+    parser.add_argument(
+        "--min-bm25-score",
+        type=float,
+        default=DEFAULT_MIN_BM25_SCORE,
+        help=f"Guardrail BM25 eşik değeri (varsayılan: {DEFAULT_MIN_BM25_SCORE})",
+    )
     parser.add_argument(
         "--max-turns",
         type=int,
@@ -127,6 +166,7 @@ def main():
         parser.error("--max-turns en az 1 olmalıdır.")
 
     use_rewrite = not args.no_rewrite
+    use_guardrail = not args.no_guardrail
 
     if args.query:
         handle_question(
@@ -137,6 +177,10 @@ def main():
             args.rerank,
             memory=None,
             use_rewrite=use_rewrite,
+            use_guardrail=use_guardrail,
+            min_rerank_score=args.min_rerank_score,
+            min_dense_score=args.min_dense_score,
+            min_bm25_score=args.min_bm25_score,
         )
         return
 
@@ -149,7 +193,7 @@ def main():
     print(
         f"Ayarlar -> top_k={args.top_k} | debug={args.debug} | "
         f"search_only={args.search_only} | rerank={args.rerank} | "
-        f"rewrite={use_rewrite} | max_turns={args.max_turns}\n"
+        f"rewrite={use_rewrite} | guardrail={use_guardrail} | max_turns={args.max_turns}\n"
     )
 
     while True:
@@ -181,6 +225,10 @@ def main():
             args.rerank,
             memory=memory,
             use_rewrite=use_rewrite,
+            use_guardrail=use_guardrail,
+            min_rerank_score=args.min_rerank_score,
+            min_dense_score=args.min_dense_score,
+            min_bm25_score=args.min_bm25_score,
         )
 
 

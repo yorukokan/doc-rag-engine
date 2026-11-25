@@ -1,5 +1,12 @@
 import time
 
+from guardrail import (
+    DEFAULT_MIN_BM25_SCORE,
+    DEFAULT_MIN_DENSE_SCORE,
+    DEFAULT_MIN_RERANK_SCORE,
+    REFUSAL_MESSAGE,
+    check_retrieval_guardrail,
+)
 from llm_client import MODEL_NAME, client
 from retriever import search
 from rewriter import rewrite_query
@@ -11,6 +18,10 @@ def ask_rag_with_trace(
     use_rerank: bool = False,
     history: list[dict] | None = None,
     use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
+    min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
+    min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
 ) -> dict:
     # 1. Sohbet geçmişi varsa ve rewrite açıksa takip sorusunu bağımsız arama sorgusuna çevir
     if use_rewrite and history:
@@ -29,6 +40,27 @@ def ask_rag_with_trace(
     retrieved_chunks = search(rewritten_query, top_k=top_k, use_rerank=use_rerank)
     retrieval_ms = round((time.perf_counter() - t0) * 1000, 1)
 
+    # 2.5. Erken Reddetme Kapısı (Guardrail): Skorlar eşiğin altındaysa LLM'i hiç çağırma
+    if use_guardrail:
+        passed, rejection_reason = check_retrieval_guardrail(
+            retrieved_chunks,
+            use_rerank=use_rerank,
+            min_rerank_score=min_rerank_score,
+            min_dense_score=min_dense_score,
+            min_bm25_score=min_bm25_score,
+        )
+        if not passed:
+            return {
+                "answer": REFUSAL_MESSAGE,
+                "chunks": retrieved_chunks,
+                "rewritten_query": rewritten_query,
+                "rewrite_ms": rewrite_ms,
+                "retrieval_ms": retrieval_ms,
+                "generation_ms": 0.0,
+                "early_rejected": True,
+                "rejection_reason": rejection_reason,
+            }
+
     # 3. Bulunan kartları LLM'in okuyabileceği düzenli bir metne çevir
     context_parts = []
     for chunk in retrieved_chunks:
@@ -41,7 +73,7 @@ def ask_rag_with_trace(
     system_prompt = (
         "Sen sadece sana verilen doküman parçalarına dayanarak cevap veren bir teknik asistansın. "
         "Verilen metinlerde olmayan hiçbir bilgiyi kendi ezberinden ekleme. "
-        "Eğer cevap metinlerde yoksa açıkça 'Verilen dokümanlarda bu bilgi bulunmamaktadır.' de. "
+        f"Eğer cevap metinlerde yoksa açıkça '{REFUSAL_MESSAGE}' de. "
         "Sohbet geçmişi yalnızca konuşmanın akışını anlamak içindir; tüm olgusal bilgiler mutlaka "
         "bu turda verilen DOKÜMANLAR bölümünden gelmeli ve verdiğin her bilginin sonuna mutlaka "
         "[dosya_adi - Bölüm] formatında kaynak eklenmelidir."
@@ -69,7 +101,7 @@ SORU: {question}
         temperature=0.1,  # 0.1 = Yaratıcılığı kıs, sadece metne sadık kal
     )
     generation_ms = round((time.perf_counter() - t1) * 1000, 1)
-    answer = response.choices[0].message.content or ""
+    answer = (response.choices[0].message.content or "") if response.choices else ""
 
     return {
         "answer": answer,
@@ -78,6 +110,8 @@ SORU: {question}
         "generation_ms": generation_ms,
         "rewritten_query": rewritten_query,
         "rewrite_ms": rewrite_ms,
+        "early_rejected": False,
+        "rejection_reason": None,
     }
 
 
@@ -87,6 +121,10 @@ def ask_rag(
     use_rerank: bool = False,
     history: list[dict] | None = None,
     use_rewrite: bool = True,
+    use_guardrail: bool = True,
+    min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
+    min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
+    min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
 ) -> str:
     return ask_rag_with_trace(
         question,
@@ -94,6 +132,10 @@ def ask_rag(
         use_rerank=use_rerank,
         history=history,
         use_rewrite=use_rewrite,
+        use_guardrail=use_guardrail,
+        min_rerank_score=min_rerank_score,
+        min_dense_score=min_dense_score,
+        min_bm25_score=min_bm25_score,
     )["answer"]
 
 

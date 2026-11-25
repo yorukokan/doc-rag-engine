@@ -49,6 +49,7 @@ Dokümanlar (data/ — .md, .txt, .pdf)
                                 FastAPI REST API (src/api.py: /health, /ask, /ask/stream [SSE: meta → token → done / error], /search, /sessions/{session_id}, /documents, Swagger /docs)
                                 Görsel Web Arayüzü (src/ui.py + src/ui_client.py -> Streamlit @ http://localhost:8501, ⚡ Canlı Akış & 📚 Bilgi Bankası)
                                 20 Soruluk LLM-as-a-Judge Karnesi (eval/run_eval.py)
+                                Çok Turlu & Multi-Hop Agentic Değerlendirme Karnesi (eval/run_advanced_eval.py)
 ```
 
 ### ✨ Temel Mühendislik Özellikleri
@@ -76,6 +77,10 @@ Dokümanlar (data/ — .md, .txt, .pdf)
 - **REST API & Oturum Yönetimi (`src/api.py`)**: FastAPI tabanlı üretim uyumlu HTTP katmanı sunar; otomatik OpenAPI/Swagger (`/docs`) dokümantasyonu üretir. Bellek içi `SessionStore` (`threading.Lock` + `OrderedDict`, varsayılan `max_sessions=100`, `default_max_turns=5`) ile thread-safe ve LRU tahliyeli çok turlu oturum yönetimi sağlar (erken reddedilen sorular oturuma kaydedilmez). `src/retriever.py` içindeki `_qdrant_lock` ve `finally: client.close()` yapısı ile yerel disk tabanlı Qdrant erişiminde eşzamanlı kilit çakışmasını önler. Pydantic v2 doğrulaması (`question`/`query` boşluk kontrolü, `top_k` `1..20`, `candidate_k` `1..50`, `rrf_k >= 1`, `max_agent_steps` `1..10`, `session_id` `^[A-Za-z0-9_-]{1,128}$`) uygular; `POST /ask` `use_agent` ve `max_agent_steps` parametrelerini destekleyip yanıtta `agent_steps` döndürür. `POST /ask/stream` uç noktası aynı `AskRequest` şemasıyla **Server-Sent Events (`text/event-stream`)** üzerinden canlı akış sağlar (`meta` → `token` → `done` / `error`). Ayrıca `GET /documents`, `POST /documents` (`multipart/form-data`, `?overwrite=true`, `201` / `400` / `409` / `413` / `503`) ve `DELETE /documents/{filename}` (`400` / `404` / `503`) uç noktalarıyla canlı doküman yönetimi sunar. `/health`, `502`/`503` ve SSE `error` yanıtlarında `LLM_API_KEY`, `LLM_BASE_URL` veya iç istisna detaylarını dışarı sızdırmaz.
 - **Görsel Web Arayüzü (`src/ui.py`, `src/ui_client.py`)**: Streamlit tabanlı web arayüzü, `httpx` ile çalışan `src/ui_client.py` istemcisi üzerinden FastAPI arka ucuna (`http://127.0.0.1:8000`) bağlanır. Kenar çubuğunda canlı `/health` durum rozeti (Qdrant koleksiyonu, indekslenen parça sayısı, LLM modeli), **📚 Bilgi Bankası (Dokümanlar)** paneli (sürükle-bırak `.md`/`.txt`/`.pdf` yükleme, `Aynı isimde varsa üzerine yaz` seçeneği, `📤 Yükle ve İndeksle`, yüklü doküman/parça özeti, `🔄 Yenile` ve `🗑️` ile tek tıkla silme), **Tam RAG Sohbet** (`/ask` ve `/ask/stream`) ve **Sadece Arama (Röntgen)** (`/search`) çalışma modları, `top_k` (`1..10`) / Rerank / Rewrite / Guardrail anahtarları, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarı (`Maksimum Ajan Adımı` `1..5` kaydırıcısı), varsayılan açık **⚡ Canlı Akış (Streaming)** anahtarı (`ask_question_stream` üzerinden kelime/token bazlı canlı yanıt akışı), gelişmiş Guardrail eşik ayarları (`min_rerank_score`, `min_dense_score`, `min_bm25_score`) ve sunucu oturumunu sıfırlayan sohbet temizleme kontrolü (`DELETE /sessions/{session_id}`) sunar. Ana ekranda başlangıç için 4 adet tıklanabilir örnek soru kartı (çok parçalı ajan testi ve tuzak soru dahil) ve her yanıtın altında Rewrite/Arama/LLM sürelerini, **🤖 Ajan Karar Adımları** kartlarını, yeniden yazılan sorguyu, Guardrail gerekçesini ve Rerank/RRF/Vektör/BM25 skorlu kaynak parçalarını gösteren katlanabilir **🔬 Röntgen (Observability)** paneli bulunur.
 - **Otomatik Değerlendirme ve LLM-as-a-Judge (`eval/run_eval.py`)**: `Recall@1`, `Recall@2`, Citation uyumu, tuzak soru reddi, Guardrail erken reddetme / yanlış pozitif sayıları, ortalama latency ve hakem LLM üzerinden **Sadakat (Faithfulness)** & **Cevap Alakası (Relevance)** metriklerini ölçer (`--no-guardrail` ile kapısız karşılaştırmayı destekler).
+- **Çok Turlu (Multi-Turn) & Multi-Hop Agentic Değerlendirme Karnesi (`eval/run_advanced_eval.py`, `eval/metrics.py`, `eval/advanced_dataset.json`)**:
+  - **Çok Turlu Senaryolar (`multi_turn`)**: `ConversationMemory(max_turns=5)` ve `Query Rewriter` akışıyla **4 diyalog / 12 tur** (8 cevaplanabilir + 4 tuzak takip sorusu) üzerinde 1. turda sıfır rewrite uyumunu (`turn1_zero_rewrite_ok`), takip turlarında zamir çözümleme anahtar kelime oranını (`rewrite_keyword_rate`), bölüm/kaynak kapsamını, erken reddedilen turların hafızaya eklenmemesini ve Guardrail tuzak yakalama / yanlış pozitif oranlarını ölçer.
+  - **Multi-Hop Karşılaştırma (`multi_hop`)**: **8 multi-hop soru** (5 `cross_source` + 1 `multi_section` çoklu-parça ve 2 `trap` tuzak soru) üzerinde `Classic RAG` (`use_agent=False`) ile `Agentic RAG` (`use_agent=True`) modlarını yan yana çalıştırır; çoklu kaynak citation uyumunu (`compute_multi_source_citation`), tam/ortalama bölüm & kaynak kapsamını, ortalama ajan/arama adımlarını ve `compute_mode_delta` ile **`Agentic - Classic`** delta karnesini hesaplar.
+  - **Hakem & JSON Rapor**: Opsiyonel `--judge` ile cevaplanabilir sorularda `faithfulness`, `relevance`, `completeness` (1–5) ve tuzak sorularda `refused_properly` puanlaması yapar; `--output` parametresiyle meta, özet, delta ve detaylı kayıtları UTF-8 **JSON rapor** (`save_report`) olarak dışa aktarır.
 
 ---
 
@@ -93,6 +98,12 @@ Sistemin arama ve üretim kalitesi `eval/run_eval.py --rerank --judge` ile otoma
 | **Tuzak Soru (Halüsinasyon Reddi)** | %100.0 | %100.0 (4/4) | **%100.0 (4/4)** | ✅ Sıfır Halüsinasyon |
 | **LLM-as-a-Judge: Sadakat (Faithfulness)** | — | — | **5.00 / 5.00** | ✅ Tam Sadakat |
 | **LLM-as-a-Judge: Cevap Alakası** | — | — | **5.00 / 5.00** | ✅ Tam Alaka |
+
+### Çok Turlu (Multi-Turn) & Multi-Hop Agentic Değerlendirme Karnesi
+
+`eval/run_advanced_eval.py` ve `eval/advanced_dataset.json` ile iki ek boyutta kapsamlı değerlendirme yapılır:
+- **Çok Turlu Sohbet Karnesi (`--mode multi-turn`)**: 4 diyalog / 12 tur (zamir çözümlemeli takip soruları + tuzak takip soruları) üzerinden rewrite başarısı, bölüm/kaynak kapsamı, citation, Guardrail tuzak yakalama ve gecikme dağılımını raporlar.
+- **Multi-Hop Karşılaştırma Karnesi (`--mode multi-hop`)**: 8 multi-hop soruda (6 çoklu-parça + 2 tuzak) **Classic RAG** vs **Agentic RAG** sonuçlarını ve **`Agentic - Classic`** delta farklarını (`full_section_coverage_delta`, `full_source_coverage_delta`, `citation_full_delta`, `total_latency_ms_delta`, `completeness_delta` vb.) üretir; `--output` ile JSON rapor kaydeder.
 
 ---
 
@@ -117,12 +128,16 @@ doc-rag-engine/
 │   ├── ui_client.py                   # Streamlit arayüzü için httpx tabanlı FastAPI istemcisi
 │   └── ui.py                          # Streamlit Görsel Web Arayüzü, 📚 Bilgi Bankası ve 🔬 Röntgen paneli
 ├── eval/
+│   ├── advanced_dataset.json          # 4 diyalog (12 tur) + 8 multi-hop soruluk gelişmiş değerlendirme seti
 │   ├── dataset.json                   # 20 soruluk test veri seti (16 normal + 4 tuzak soru)
+│   ├── metrics.py                     # Veri seti şema doğrulama, kapsam/citation metrikleri ve delta hesaplama
+│   ├── run_advanced_eval.py           # Çok turlu & Multi-Hop Classic vs Agentic değerlendirme ve JSON rapor scripti
 │   └── run_eval.py                    # Recall@1/2, Citation, Latency ve LLM-as-a-Judge scripti
 ├── tests/
 │   ├── test_agent.py                  # Agentic RAG planlayıcı, tekilleştirme, fallback ve entegrasyon testleri
 │   ├── test_api.py                    # REST API endpoint, doğrulama, LRU oturum ve sır izolasyonu testleri
 │   ├── test_documents.py              # Dinamik doküman doğrulama, artımlı indeksleme, /documents API ve ui_client testleri
+│   ├── test_eval.py                   # Gelişmiş eval veri seti tutarlılığı, metrik, hakem, çok turlu ve delta testleri
 │   ├── test_guardrail.py              # Erken reddetme kapısı, generator ve CLI hafıza testleri
 │   ├── test_memory_and_rewriter.py    # Sohbet hafızası, query rewriter ve generator birim testleri
 │   ├── test_streaming.py              # Generator/Agent akışı, POST /ask/stream (SSE) ve ui_client akış testleri
@@ -167,6 +182,9 @@ python3 src/cli.py --debug --min-dense-score 0.5 --min-bm25-score 8.0  # Rerank 
 python3 src/cli.py --search-only --rerank                     # LLM çağırmadan sadece arama röntgeni
 python3 eval/run_eval.py --rerank --judge                     # 20 soruluk tam değerlendirme ve hakem karnesi
 python3 eval/run_eval.py --rerank --no-guardrail              # Guardrail kapalıyken değerlendirme çalıştırır
+python3 eval/run_advanced_eval.py --mode all --rerank --judge --output eval/report.json  # Çok turlu + Multi-Hop tam karne ve JSON çıktı
+python3 eval/run_advanced_eval.py --mode multi-turn --rerank                              # Yalnızca 4 diyalog / 12 turluk çok turlu karne
+python3 eval/run_advanced_eval.py --mode multi-hop --rerank --judge                       # Yalnızca 8 soruluk Classic vs Agentic karşılaştırması
 ```
 
 4. **CLI Seçenekleri ve Etkileşimli Komutlar:**
@@ -251,7 +269,7 @@ streamlit run src/ui.py
 
 Arayüze tarayıcınızdan **`http://localhost:8501`** adresinden erişebilir, sol kenar çubuğundan canlı `/health` durumunu, **📚 Bilgi Bankası (Dokümanlar)** bölümünü (sürükle-bırak `.md`/`.txt`/`.pdf` doküman yükleme, `Aynı isimde varsa üzerine yaz` seçeneğiyle `📤 Yükle ve İndeksle`, yüklü doküman/parça özeti, `🔄 Yenile` ve `🗑️` ile tek tıkla silme), çalışma modunu, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarını (`Maksimum Ajan Adımı` `1..5`), **⚡ Canlı Akış (Streaming)** anahtarını (`POST /ask/stream` ile kelime/token bazlı canlı yanıt akışı; kapatılırsa `/ask` kullanılır) ve Guardrail eşiklerini yönetebilirsiniz. Ajan modu açıkken her yanıtın altındaki **🔬 Röntgen (Observability)** panelinde **🤖 Ajan Karar Adımları** (`search`, `answer`, `direct_chat`, `fallback` aksiyonları, düşünce gerekçesi, alt sorgu, bulunan parça sayısı ve adım süresi) görüntülenir.
 
-7. **Birim Testlerini Çalıştırma (99 Test — `tests/test_documents.py` dahil):**
+7. **Birim Testlerini Çalıştırma (110 Test — `tests/test_eval.py` dahil):**
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v

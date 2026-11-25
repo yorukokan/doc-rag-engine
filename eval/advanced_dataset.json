@@ -1,0 +1,226 @@
+{
+  "multi_turn": [
+    {
+      "id": "mt_01",
+      "scenario_name": "SSH Güvenliği ve Yapılandırma Takibi",
+      "turns": [
+        {
+          "question": "Linux sunucularda SSH ile güvenli bağlanmak için parola yerine ne kullanılması önerilir?",
+          "answerable": true,
+          "expected_sources": ["linux_temelleri.md"],
+          "expected_sections": ["SSH Güvenliği ve Anahtar Kullanımı"],
+          "expected_answer_keywords": ["ssh-keygen", "anahtar"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "Peki bunun için /etc/ssh/sshd_config dosyasında hangi iki ayar yapılmalıdır?",
+          "answerable": true,
+          "expected_rewrite_keywords": ["ssh"],
+          "expected_sources": ["linux_temelleri.md"],
+          "expected_sections": ["SSH Güvenliği ve Anahtar Kullanımı"],
+          "expected_answer_keywords": ["PermitRootLogin no", "PasswordAuthentication no"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "Oradaki varsayılan SSH portunu 2222 yapmak için Fail2ban ban süresini kaç saniye ayarlamalıyım?",
+          "answerable": false,
+          "expected_rewrite_keywords": ["ssh"],
+          "expected_sources": [],
+          "expected_sections": [],
+          "expect_early_reject": true
+        }
+      ]
+    },
+    {
+      "id": "mt_02",
+      "scenario_name": "Wildcard DNS ve Risk Takibi",
+      "turns": [
+        {
+          "question": "Wildcard DNS kayıtları ne işe yarar ve hangi ortamlarda avantaj sağlar?",
+          "answerable": true,
+          "expected_sources": ["dns_ve_ag_notlari.md"],
+          "expected_sections": ["Wildcard DNS Kayıtları"],
+          "expected_answer_keywords": ["*.ornek.com", "multi-tenant"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "Peki onun yanlış yapılandırılması ne gibi sorunlara yol açabilir?",
+          "answerable": true,
+          "expected_rewrite_keywords": ["wildcard", "dns"],
+          "expected_sources": ["dns_ve_ag_notlari.md"],
+          "expected_sections": ["Wildcard DNS Kayıtları"],
+          "expected_answer_keywords": ["güvenlik", "trafik"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "Bu kayıtlar için Cloudflare proxied orange cloud modu ücretli mi ve hangi TLS sürümünü zorlar?",
+          "answerable": false,
+          "expected_rewrite_keywords": ["dns"],
+          "expected_sources": [],
+          "expected_sections": [],
+          "expect_early_reject": true
+        }
+      ]
+    },
+    {
+      "id": "mt_03",
+      "scenario_name": "JWT Yapısı ve API Başlık Takibi",
+      "turns": [
+        {
+          "question": "JWT hangi üç bölümden oluşur?",
+          "answerable": true,
+          "expected_sources": ["http_ve_api_notlari.md"],
+          "expected_sections": ["JWT (JSON Web Token) ile Kimlik Doğrulama"],
+          "expected_answer_keywords": ["Header", "Payload", "Signature"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "İstemci sonraki API isteklerinde onu sunucuya hangi başlıkla gönderir?",
+          "answerable": true,
+          "expected_rewrite_keywords": ["jwt"],
+          "expected_sources": ["http_ve_api_notlari.md"],
+          "expected_sections": ["JWT (JSON Web Token) ile Kimlik Doğrulama"],
+          "expected_answer_keywords": ["Authorization", "Bearer"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "Onun için RS256 yerine EdDSA algoritmasının geçerlilik süresi (exp) varsayılan kaç dakikadır?",
+          "answerable": false,
+          "expected_rewrite_keywords": ["jwt"],
+          "expected_sources": [],
+          "expected_sections": [],
+          "expect_early_reject": true
+        }
+      ]
+    },
+    {
+      "id": "mt_04",
+      "scenario_name": "VPN Türleri ve Protokol Takibi",
+      "turns": [
+        {
+          "question": "Kurumsal ağlarda şubeler arası ve uzaktan çalışan erişimi için hangi VPN türleri kullanılır?",
+          "answerable": true,
+          "expected_sources": ["ag_guvenligi.md"],
+          "expected_sections": ["VPN ve Şifreli Tünelleme"],
+          "expected_answer_keywords": ["Site-to-Site", "Client-to-Site"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "Peki günümüzde bunun için hangi iki protokol yaygın olarak tercih edilir?",
+          "answerable": true,
+          "expected_rewrite_keywords": ["vpn"],
+          "expected_sources": ["ag_guvenligi.md"],
+          "expected_sections": ["VPN ve Şifreli Tünelleme"],
+          "expected_answer_keywords": ["WireGuard", "IPsec"],
+          "expect_early_reject": false
+        },
+        {
+          "question": "Bu protokoller için Nginx reverse proxy üzerinde hangi SSL cipher suite direktifi tanımlanır?",
+          "answerable": false,
+          "expected_rewrite_keywords": ["vpn"],
+          "expected_sources": [],
+          "expected_sections": [],
+          "expect_early_reject": true
+        }
+      ]
+    }
+  ],
+  "multi_hop": [
+    {
+      "id": "mh_01",
+      "category": "cross_source",
+      "question": "Rate Limiting hem HTTP API'lerde hem de DDoS korunmasında nasıl kullanılır; sınır aşıldığında hangi HTTP durum kodu döner ve DDoS'a karşı yanında hangi diğer yöntemler yer alır?",
+      "answerable": true,
+      "expected_sources": ["http_ve_api_notlari.md", "ag_guvenligi.md"],
+      "expected_sections": [
+        "Rate Limiting ve Önbellekleme (Caching)",
+        "DDoS Saldırıları ve Korunma Yöntemleri"
+      ],
+      "expected_answer_keywords": ["429", "WAF"],
+      "expect_early_reject": false
+    },
+    {
+      "id": "mh_02",
+      "category": "cross_source",
+      "question": "Uzak erişim güvenliği için tercih edilen VPN protokolleri ile Linux SSH anahtar doğrulamasında kullanılan araç ve yapılandırma ayarları nelerdir?",
+      "answerable": true,
+      "expected_sources": ["ag_guvenligi.md", "linux_temelleri.md"],
+      "expected_sections": [
+        "VPN ve Şifreli Tünelleme",
+        "SSH Güvenliği ve Anahtar Kullanımı"
+      ],
+      "expected_answer_keywords": ["WireGuard", "ssh-keygen"],
+      "expect_early_reject": false
+    },
+    {
+      "id": "mh_03",
+      "category": "cross_source",
+      "question": "Temel DNS kayıt türleri (A, AAAA, CNAME, MX, TXT) ne işe yarar ve TLS/SSL iletişiminde sunucu kimliği nasıl doğrulanır?",
+      "answerable": true,
+      "expected_sources": ["dns_ve_ag_notlari.md", "ag_guvenligi.md"],
+      "expected_sections": [
+        "Temel DNS Kayıt Türleri",
+        "TLS/SSL ve Sertifika Mantığı"
+      ],
+      "expected_answer_keywords": ["AAAA", "Sertifika Otoritesi"],
+      "expect_early_reject": false
+    },
+    {
+      "id": "mh_04",
+      "category": "cross_source",
+      "question": "Linux'ta systemd servislerini yönetme komutları ile Git'te uzak depoya değişiklik gönderme ve hassas dosyaları hariç tutma yöntemleri nelerdir?",
+      "answerable": true,
+      "expected_sources": ["linux_temelleri.md", "git_ve_versiyon_notlari.txt"],
+      "expected_sections": [
+        "Servis Yönetimi (systemd)",
+        "Bölüm 2"
+      ],
+      "expected_answer_keywords": ["systemctl", "git push", ".gitignore"],
+      "expect_early_reject": false
+    },
+    {
+      "id": "mh_05",
+      "category": "cross_source",
+      "question": "HTTP 401 ve 403 durum kodları arasındaki fark nedir ve Linux'ta chmod 750 dosya izni kimlere hangi yetkileri verir?",
+      "answerable": true,
+      "expected_sources": ["http_ve_api_notlari.md", "linux_temelleri.md"],
+      "expected_sections": [
+        "HTTP Durum Kodları",
+        "Dosya İzinleri (chmod ve chown)"
+      ],
+      "expected_answer_keywords": ["401", "403", "chmod 750"],
+      "expect_early_reject": false
+    },
+    {
+      "id": "mh_06",
+      "category": "multi_section",
+      "question": "DNS çözümleme süreci hangi sırayla ilerler ve TTL değerinin düşük (örneğin 300 saniye) veya yüksek tutulması DNS sunucusunu nasıl etkiler?",
+      "answerable": true,
+      "expected_sources": ["dns_ve_ag_notlari.md"],
+      "expected_sections": [
+        "DNS Nedir ve Nasıl Çalışır?",
+        "TTL (Time to Live) Kavramı"
+      ],
+      "expected_answer_keywords": ["recursive resolver", "300"],
+      "expect_early_reject": false
+    },
+    {
+      "id": "mh_07",
+      "category": "trap",
+      "question": "Kubernetes Ingress Controller ile PostgreSQL pgBouncer bağlantı havuzu ayarları nasıl entegre edilir?",
+      "answerable": false,
+      "expected_sources": [],
+      "expected_sections": [],
+      "expect_early_reject": true
+    },
+    {
+      "id": "mh_08",
+      "category": "trap",
+      "question": "Terraform state kilitlemesi için AWS DynamoDB tablosu ve S3 bucket şifreleme politikası nasıl yapılandırılır?",
+      "answerable": false,
+      "expected_sources": [],
+      "expected_sections": [],
+      "expect_early_reject": true
+    }
+  ]
+}

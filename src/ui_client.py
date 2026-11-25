@@ -117,6 +117,8 @@ def ask_question(
     base_url: str = DEFAULT_API_URL,
     timeout: float = 120.0,
     client: httpx.Client | None = None,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
 ) -> dict[str, Any]:
     url = f"{_normalize_base_url(base_url)}/ask"
     payload: dict[str, Any] = {
@@ -131,6 +133,9 @@ def ask_question(
     }
     if session_id is not None:
         payload["session_id"] = session_id
+    if use_agent:
+        payload["use_agent"] = True
+        payload["max_agent_steps"] = max_agent_steps
 
     response = _send_request(
         "POST",

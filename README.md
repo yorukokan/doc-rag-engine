@@ -35,13 +35,17 @@ Dokümanlar (data/ — .md, .txt, .pdf)
 [5. Reranker]          ──► Stage 2: Multilingual Cross-Encoder (bge-reranker-v2-m3-int8) ──► Hassas Sıralama
         │
         ▼
-[6. Guardrail]         ──► Erken Reddetme Kapısı (rerank < -3.0 veya dense < 0.45 & bm25 < 7.0)
+[6. Agentic RAG (Ops.)]──► (--agent / use_agent=True) Planla → Ara → Değerlendir Sınırlı Döngüsü (max_steps)
+        │                  Aksiyonlar: search | answer | direct_chat | fallback
+        │                  seen_queries tekrar koruması + chunk_id tekilleştirme + agent_steps izleme
+        ▼
+[7. Guardrail]         ──► Erken Reddetme Kapısı (rerank < -3.0 veya dense < 0.45 & bm25 < 7.0)
         │                  (Eşik altı: LLM atlanır, 0.0 ms ile sabit reddetme; hafızaya yazılmaz)
         ▼
-[7. Generator]         ──► OpenAI-Uyumlu LLM API (temp=0.1, geçmiş farkında) ──► Zorunlu [dosya - Bölüm] Citation + Süre Ölçümü
+[8. Generator]         ──► OpenAI-Uyumlu LLM API (temp=0.1, geçmiş farkında) ──► Zorunlu [dosya - Bölüm] Citation + Süre Ölçümü
         │
         ▼
-[8. CLI / API / UI / Eval]  ──► Etkileşimli Röntgen CLI (--debug, --rerank, --no-rewrite, --no-guardrail, --max-turns)
+[9. CLI / API / UI / Eval]  ──► Etkileşimli Röntgen CLI (--debug, --rerank, --agent, --max-agent-steps, --no-rewrite, --no-guardrail, --max-turns)
                                 FastAPI REST API (src/api.py: /health, /ask, /search, /sessions/{session_id}, Swagger /docs)
                                 Görsel Web Arayüzü (src/ui.py + src/ui_client.py -> Streamlit @ http://localhost:8501)
                                 20 Soruluk LLM-as-a-Judge Karnesi (eval/run_eval.py)
@@ -57,10 +61,16 @@ Dokümanlar (data/ — .md, .txt, .pdf)
   - **1. Aşama (Hızlı Eleme):** Anlamsal vektör araması (Dense) ile anahtar kelime araması (**BM25Okapi**) sonuçları **Reciprocal Rank Fusion (RRF)** formülüyle birleştirilir.
   - **2. Aşama (Hassas Sıralama):** Aday kartlar Türkçe destekli yerel Cross-Encoder (`BAAI/bge-reranker-v2-m3-int8`) ile soruyla yan yana okunarak yeniden puanlanır.
 - **Erken Reddetme Kapısı / Guardrail (`src/guardrail.py`)**: Reranker/Retriever ile Generator arasında konumlanır. Parça dönmezse veya en yüksek skorlar belirlenen eşiklerin altında kalırsa (`--rerank` açıkken `rerank_score < -3.0`; kapalıyken veya `rerank_score` yokken `dense_score < 0.45` ve `bm25_score < 7.0`) LLM'i hiç çağırmadan **0.0 ms** üretim süresiyle sabit reddetme mesajı (`"Verilen dokümanlarda bu bilgi bulunmamaktadır."`) döndürür. Erken reddedilen sorular `ConversationMemory` sohbet hafızasına yazılmaz.
-- **Halüsinasyon Koruması, Citation ve Süre İzleme (`src/llm_client.py`, `src/generator.py`)**: Ortak `.env` yapılandırmalı OpenAI-uyumlu istemci üzerinden düşük sıcaklık (`temperature=0.1`) ve katı sistem kurallarıyla çalışır. Sohbet geçmişini yalnızca konuşma akışını anlamak için kullanır; tüm olgusal bilgileri o turda getirilen `DOKÜMANLAR` bölümünden alır, her bilginin sonuna `[dosya_adi - Bölüm]` kaynağı ekler, doküman dışı soruları reddeder ve `rewrite_ms`, `retrieval_ms`, `generation_ms` sürelerini ölçer.
-- **Etkileşimli Röntgen CLI (`src/cli.py`)**: `--debug`, `--search-only`, `--rerank`, `--top-k`, `--query`, `--no-rewrite`, `--no-guardrail`, `--min-rerank-score`, `--min-dense-score`, `--min-bm25-score` ve `--max-turns` bayraklarını destekler; her soruda (varsa) yeniden yazılan sorguyu, Guardrail erken reddetme bilgisini, Vektör (cosine), BM25, RRF, Rerank skorlarını ve Rewrite/Arama/Üretim gecikmelerini canlı gösterir.
-- **REST API & Oturum Yönetimi (`src/api.py`)**: FastAPI tabanlı üretim uyumlu HTTP katmanı sunar; otomatik OpenAPI/Swagger (`/docs`) dokümantasyonu üretir. Bellek içi `SessionStore` (`threading.Lock` + `OrderedDict`, varsayılan `max_sessions=100`, `default_max_turns=5`) ile thread-safe ve LRU tahliyeli çok turlu oturum yönetimi sağlar (erken reddedilen sorular oturuma kaydedilmez). `src/retriever.py` içindeki `_qdrant_lock` ve `finally: client.close()` yapısı ile yerel disk tabanlı Qdrant erişiminde eşzamanlı kilit çakışmasını önler. Pydantic v2 doğrulaması (`question`/`query` boşluk kontrolü, `top_k` `1..20`, `candidate_k` `1..50`, `rrf_k >= 1`, `session_id` `^[A-Za-z0-9_-]{1,128}$`) uygular; `/health` ve 502/503 hata yanıtlarında `LLM_API_KEY`, `LLM_BASE_URL` veya iç istisna detaylarını dışarı sızdırmaz.
-- **Görsel Web Arayüzü (`src/ui.py`, `src/ui_client.py`)**: Streamlit tabanlı web arayüzü, `httpx` ile çalışan `src/ui_client.py` istemcisi üzerinden FastAPI arka ucuna (`http://127.0.0.1:8000`) bağlanır. Kenar çubuğunda canlı `/health` durum rozeti (Qdrant koleksiyonu, indekslenen parça sayısı, LLM modeli), **Tam RAG Sohbet** (`/ask`) ve **Sadece Arama (Röntgen)** (`/search`) çalışma modları, `top_k` (`1..10`) / Rerank / Rewrite / Guardrail anahtarları, gelişmiş Guardrail eşik ayarları (`min_rerank_score`, `min_dense_score`, `min_bm25_score`) ve sunucu oturumunu sıfırlayan sohbet temizleme kontrolü (`DELETE /sessions/{session_id}`) sunar. Ana ekranda başlangıç için 4 adet tıklanabilir örnek soru kartı (tuzak soru dahil) ve her yanıtın altında Rewrite/Arama/LLM sürelerini, yeniden yazılan sorguyu, Guardrail gerekçesini ve Rerank/RRF/Vektör/BM25 skorlu kaynak parçalarını gösteren katlanabilir **🔬 Röntgen (Observability)** paneli bulunur.
+- **Çok Adımlı Agentic RAG (`src/agent.py`)**: `use_agent=True` (`--agent`) etkinleştirildiğinde `run_agent_rag` yürütücüsü saf Python ile sınırlı bir **Planla → Ara → Değerlendir** döngüsü (varsayılan `max_steps=3`) çalıştırır. `temperature=0.0` ile çalışan JSON planlayıcı her adımda dört aksiyon yolundan birini izler:
+  - `search`: Çok parçalı veya karşılaştırmalı soruları odaklanmış alt sorgulara böler; `seen_queries` normalizasyonuyla aynı sorgunun tekrar aranmasını engeller ve sonuçları `chunk_id` (yoksa kaynak/bölüm/metin özeti) üzerinden tekilleştirerek (`merge_and_deduplicate_chunks`) en yüksek skorlu kayıtları biriktirir (birden fazla arama yapıldığında final bağlam sınırı `top_k * 2`, tek aramada `top_k`).
+  - `answer`: Toplanan doküman parçaları yeterli görüldüğünde döngüyü sonlandırıp sentez aşamasına geçer.
+  - `direct_chat`: Yalnızca 1. adımda ve henüz hiç arama yapılmamışken selamlaşma veya gündelik sohbet mesajlarında arama yapmadan doğrudan yanıt üretir (`temperature=0.3`).
+  - `fallback`: Planlayıcı LLM çağrısı hata verirse, geçerli JSON döndürmezse veya henüz parça yokken yeni alt sorgu üretilemezse yeniden yazılan/orijinal sorgu ile güvenli geri dönüş araması yapar (parça varsa mevcut bağlamla senteze geçer).
+  - Sentez öncesinde (direct chat hariç) **Guardrail** kontrolü uygulanır ve final yanıt `temperature=0.1` ile zorunlu `[dosya_adi - Bölüm]` citation kuralıyla üretilir; her karar adımı (`step`, `thought`, `action`, `query`, `chunks_found`, `duration_ms`) `agent_steps` listesiyle izlenebilir.
+- **Halüsinasyon Koruması, Citation ve Süre İzleme (`src/llm_client.py`, `src/generator.py`)**: Ortak `.env` yapılandırmalı OpenAI-uyumlu istemci üzerinden düşük sıcaklık (`temperature=0.1`) ve katı sistem kurallarıyla çalışır. Sohbet geçmişini yalnızca konuşma akışını anlamak için kullanır; tüm olgusal bilgileri o turda getirilen `DOKÜMANLAR` bölümünden alır, her bilginin sonuna `[dosya_adi - Bölüm]` kaynağı ekler, doküman dışı soruları reddeder ve `rewrite_ms`, `retrieval_ms`, `generation_ms` sürelerini ölçer (`use_agent=True` olduğunda `run_agent_rag` akışına yönlendirir).
+- **Etkileşimli Röntgen CLI (`src/cli.py`)**: `--debug`, `--search-only`, `--rerank`, `--top-k`, `--query`, `--no-rewrite`, `--no-guardrail`, `--min-rerank-score`, `--min-dense-score`, `--min-bm25-score`, `--max-turns`, `--agent` ve `--max-agent-steps` bayraklarını destekler; her soruda (varsa) yeniden yazılan sorguyu, ajan karar adımlarını (`Ajan Adımları`), Guardrail erken reddetme bilgisini, Vektör (cosine), BM25, RRF, Rerank skorlarını ve Rewrite/Arama/Üretim gecikmelerini canlı gösterir.
+- **REST API & Oturum Yönetimi (`src/api.py`)**: FastAPI tabanlı üretim uyumlu HTTP katmanı sunar; otomatik OpenAPI/Swagger (`/docs`) dokümantasyonu üretir. Bellek içi `SessionStore` (`threading.Lock` + `OrderedDict`, varsayılan `max_sessions=100`, `default_max_turns=5`) ile thread-safe ve LRU tahliyeli çok turlu oturum yönetimi sağlar (erken reddedilen sorular oturuma kaydedilmez). `src/retriever.py` içindeki `_qdrant_lock` ve `finally: client.close()` yapısı ile yerel disk tabanlı Qdrant erişiminde eşzamanlı kilit çakışmasını önler. Pydantic v2 doğrulaması (`question`/`query` boşluk kontrolü, `top_k` `1..20`, `candidate_k` `1..50`, `rrf_k >= 1`, `max_agent_steps` `1..10`, `session_id` `^[A-Za-z0-9_-]{1,128}$`) uygular; `POST /ask` `use_agent` ve `max_agent_steps` parametrelerini destekleyip yanıtta `agent_steps` döndürür; `/health` ve 502/503 hata yanıtlarında `LLM_API_KEY`, `LLM_BASE_URL` veya iç istisna detaylarını dışarı sızdırmaz.
+- **Görsel Web Arayüzü (`src/ui.py`, `src/ui_client.py`)**: Streamlit tabanlı web arayüzü, `httpx` ile çalışan `src/ui_client.py` istemcisi üzerinden FastAPI arka ucuna (`http://127.0.0.1:8000`) bağlanır. Kenar çubuğunda canlı `/health` durum rozeti (Qdrant koleksiyonu, indekslenen parça sayısı, LLM modeli), **Tam RAG Sohbet** (`/ask`) ve **Sadece Arama (Röntgen)** (`/search`) çalışma modları, `top_k` (`1..10`) / Rerank / Rewrite / Guardrail anahtarları, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarı ile **Maksimum Ajan Adımı** (`1..5`) kaydırıcısı, gelişmiş Guardrail eşik ayarları (`min_rerank_score`, `min_dense_score`, `min_bm25_score`) ve sunucu oturumunu sıfırlayan sohbet temizleme kontrolü (`DELETE /sessions/{session_id}`) sunar. Ana ekranda başlangıç için 4 adet tıklanabilir örnek soru kartı (çok parçalı ajan testi ve tuzak soru dahil) ve her yanıtın altında Rewrite/Arama/LLM sürelerini, **🤖 Ajan Karar Adımları** kartlarını, yeniden yazılan sorguyu, Guardrail gerekçesini ve Rerank/RRF/Vektör/BM25 skorlu kaynak parçalarını gösteren katlanabilir **🔬 Röntgen (Observability)** paneli bulunur.
 - **Otomatik Değerlendirme ve LLM-as-a-Judge (`eval/run_eval.py`)**: `Recall@1`, `Recall@2`, Citation uyumu, tuzak soru reddi, Guardrail erken reddetme / yanlış pozitif sayıları, ortalama latency ve hakem LLM üzerinden **Sadakat (Faithfulness)** & **Cevap Alakası (Relevance)** metriklerini ölçer (`--no-guardrail` ile kapısız karşılaştırmayı destekler).
 
 ---
@@ -96,6 +106,7 @@ doc-rag-engine/
 │   ├── retriever.py                   # Dense Vector + BM25 + RRF Hibrit Arama motoru
 │   ├── reranker.py                    # Multilingual Cross-Encoder 2. aşama sıralayıcı
 │   ├── guardrail.py                   # Skor eşiği tabanlı Erken Reddetme Kapısı (Guardrail)
+│   ├── agent.py                       # Planla → Ara → Değerlendir döngülü Agentic RAG katmanı
 │   ├── generator.py                   # OpenAI-uyumlu LLM, Citation ve süre ölçüm katmanı
 │   ├── cli.py                         # Etkileşimli sohbet ve Observability (Röntgen) CLI
 │   ├── api.py                         # FastAPI REST API, Pydantic v2 şemaları ve LRU SessionStore
@@ -105,6 +116,7 @@ doc-rag-engine/
 │   ├── dataset.json                   # 20 soruluk test veri seti (16 normal + 4 tuzak soru)
 │   └── run_eval.py                    # Recall@1/2, Citation, Latency ve LLM-as-a-Judge scripti
 ├── tests/
+│   ├── test_agent.py                  # Agentic RAG planlayıcı, tekilleştirme, fallback ve entegrasyon testleri
 │   ├── test_api.py                    # REST API endpoint, doğrulama, LRU oturum ve sır izolasyonu testleri
 │   ├── test_guardrail.py              # Erken reddetme kapısı, generator ve CLI hafıza testleri
 │   ├── test_memory_and_rewriter.py    # Sohbet hafızası, query rewriter ve generator birim testleri
@@ -140,6 +152,7 @@ cp .env.example .env
 ```bash
 python3 src/indexer.py                                        # Dokümanları vektörleştirip Qdrant'a kaydeder
 python3 src/cli.py --debug --rerank                           # Etkileşimli sohbet + Röntgen + Reranker (varsayılan: rewrite ve guardrail açık, max-turns=5)
+python3 src/cli.py --debug --rerank --agent --max-agent-steps 3  # Çok adımlı Agentic RAG + Röntgen + Reranker
 python3 src/cli.py --debug --rerank --max-turns 3             # Sohbet hafızasını son 3 turla sınırlar
 python3 src/cli.py --debug --rerank --no-rewrite              # Query rewriting'i devre dışı bırakır
 python3 src/cli.py --debug --rerank --no-guardrail            # Erken reddetme kapısını (guardrail) devre dışı bırakır
@@ -157,6 +170,8 @@ python3 eval/run_eval.py --rerank --no-guardrail              # Guardrail kapal�
 - `--min-dense-score <SKOR>`: Reranker kapalıyken (veya `rerank_score` yokken) dense cosine eşik değerini belirler (varsayılan: `0.45`).
 - `--min-bm25-score <SKOR>`: Reranker kapalıyken (veya `rerank_score` yokken) BM25 eşik değerini belirler (varsayılan: `7.0`).
 - `--max-turns <N>`: Sohbet hafızasında tutulacak maksimum tur sayısını belirler (varsayılan: `5`, en az `1`).
+- `--agent`: Çok adımlı Agentic RAG modunu aktif eder; soruyu alt sorgularla araştırıp Röntgen çıktısında `Ajan Adımları:` bölümünü gösterir.
+- `--max-agent-steps <N>`: Agentic RAG modunda atılacak maksimum planlama/arama adım sayısını belirler (varsayılan: `3`, en az `1`).
 - `/history`: Hafızadaki sohbet geçmişini tur bazında özetleyerek listeler.
 - `/clear` veya `/reset`: Aktif oturumdaki sohbet hafızasını sıfırlar.
 - `q`, `exit` veya `quit`: Etkileşimli sohbetten çıkış yapar.
@@ -174,7 +189,7 @@ Sunucu ayağa kalktıktan sonra etkileşimli Swagger/OpenAPI arayüzüne **`http
 | Metot & Yol | Açıklama | Temel Parametre / Yanıt Özeti |
 | :--- | :--- | :--- |
 | `GET /health` | Servis sağlık ve konfigürasyon kontrolü | Qdrant durumu (`ok`/`degraded`), `points_count`, model adları, `llm_configured` |
-| `POST /ask` | Çok turlu RAG soru-cevap + izleme | `question`, `session_id`, `top_k` (`1..20`, varsayılan `3`), `use_rerank`, `use_rewrite`, `use_guardrail`, eşik skorları |
+| `POST /ask` | Çok turlu RAG soru-cevap + izleme | `question`, `session_id`, `top_k` (`1..20`, varsayılan `3`), `use_rerank`, `use_rewrite`, `use_guardrail`, `use_agent` (varsayılan `false`), `max_agent_steps` (`1..10`, varsayılan `3`), eşik skorları; yanıtta `agent_steps` listesi |
 | `POST /search` | LLM çağırmadan hibrit arama (+ opsiyonel rerank) | `query`, `top_k` (`1..20`, varsayılan `3`), `use_rerank`, `rrf_k` (varsayılan `10`), `candidate_k` (`1..50`, varsayılan `6`) |
 | `GET /sessions/{session_id}` | Oturum sohbet geçmişini getirme | `session_id`, `turn_count`, `max_turns`, `messages` (yoksa `404`) |
 | `DELETE /sessions/{session_id}` | Oturum sohbet geçmişini silme | `session_id`, `deleted: true` (yoksa `404`) |
@@ -188,7 +203,12 @@ curl -s -X POST http://127.0.0.1:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "Wildcard DNS nedir?", "session_id": "demo-1", "use_rerank": true}'
 
-# 2) LLM çağırmadan hibrit arama (/search)
+# 2) Agentic RAG ile çok adımlı soru-cevap (/ask)
+curl -s -X POST http://127.0.0.1:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "SSH parola girişi nasıl kapatılır ve SSH hata logları nasıl incelenir?", "session_id": "agent-1", "use_rerank": true, "use_agent": true, "max_agent_steps": 3}'
+
+# 3) LLM çağırmadan hibrit arama (/search)
 curl -s -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{"query": "Wildcard DNS", "top_k": 3, "use_rerank": true}'
@@ -206,7 +226,7 @@ uvicorn api:app --app-dir src --reload
 streamlit run src/ui.py
 ```
 
-Arayüze tarayıcınızdan **`http://localhost:8501`** adresinden erişebilir, sol kenar çubuğundan canlı `/health` durumunu, çalışma modunu ve Guardrail eşiklerini yönetebilirsiniz.
+Arayüze tarayıcınızdan **`http://localhost:8501`** adresinden erişebilir, sol kenar çubuğundan canlı `/health` durumunu, çalışma modunu, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarını (`Maksimum Ajan Adımı` `1..5`) ve Guardrail eşiklerini yönetebilirsiniz. Ajan modu açıkken her yanıtın altındaki **🔬 Röntgen (Observability)** panelinde **🤖 Ajan Karar Adımları** (`search`, `answer`, `direct_chat`, `fallback` aksiyonları, düşünce gerekçesi, alt sorgu, bulunan parça sayısı ve adım süresi) görüntülenir.
 
 7. **Birim Testlerini Çalıştırma:**
 

@@ -1,5 +1,6 @@
 import time
 
+from agent import run_agent_rag
 from guardrail import (
     DEFAULT_MIN_BM25_SCORE,
     DEFAULT_MIN_DENSE_SCORE,
@@ -22,7 +23,26 @@ def ask_rag_with_trace(
     min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
     min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
 ) -> dict:
+    if use_agent:
+        return run_agent_rag(
+            question=question,
+            top_k=top_k,
+            use_rerank=use_rerank,
+            history=history,
+            use_rewrite=use_rewrite,
+            use_guardrail=use_guardrail,
+            min_rerank_score=min_rerank_score,
+            min_dense_score=min_dense_score,
+            min_bm25_score=min_bm25_score,
+            max_steps=max_agent_steps,
+            llm_client=client,
+            model_name=MODEL_NAME,
+            search_fn=search,
+        )
+
     # 1. Sohbet geçmişi varsa ve rewrite açıksa takip sorusunu bağımsız arama sorgusuna çevir
     if use_rewrite and history:
         rewritten_query, rewrite_ms = rewrite_query(
@@ -59,6 +79,7 @@ def ask_rag_with_trace(
                 "generation_ms": 0.0,
                 "early_rejected": True,
                 "rejection_reason": rejection_reason,
+                "agent_steps": [],
             }
 
     # 3. Bulunan kartları LLM'in okuyabileceği düzenli bir metne çevir
@@ -112,6 +133,7 @@ SORU: {question}
         "rewrite_ms": rewrite_ms,
         "early_rejected": False,
         "rejection_reason": None,
+        "agent_steps": [],
     }
 
 
@@ -125,6 +147,8 @@ def ask_rag(
     min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
     min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
 ) -> str:
     return ask_rag_with_trace(
         question,
@@ -136,6 +160,8 @@ def ask_rag(
         min_rerank_score=min_rerank_score,
         min_dense_score=min_dense_score,
         min_bm25_score=min_bm25_score,
+        use_agent=use_agent,
+        max_agent_steps=max_agent_steps,
     )["answer"]
 
 

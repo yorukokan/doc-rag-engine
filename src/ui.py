@@ -41,9 +41,9 @@ SAMPLE_QUESTIONS: list[dict[str, str]] = [
         "hint": "Web & API durum kodları",
     },
     {
-        "label": "📋 Servis Loglarını Filtreleme",
-        "question": "Linux sisteminde bir servisin hata loglarını nasıl incelerim?",
-        "hint": "Sistem yönetimi",
+        "label": "🤖 Çok Parçalı: SSH & Log Analizi",
+        "question": "SSH parola girişi nasıl kapatılır ve sonrasında SSH servisinin hata logları nasıl incelenir?",
+        "hint": "Agentic RAG çok adımlı sentez testi",
     },
     {
         "label": "🛡️ Tuzak Soru: Docker Container",
@@ -178,6 +178,99 @@ def _inject_styles() -> None:
             border: 1px solid rgba(245, 158, 11, 0.35);
             margin-bottom: 0.5rem;
         }
+        .agent-step-card {
+            padding: 0.75rem 0.95rem;
+            border-radius: 0.6rem;
+            border: 1px solid rgba(128, 128, 128, 0.22);
+            border-left: 3px solid rgba(139, 92, 246, 0.75);
+            background: rgba(128, 128, 128, 0.05);
+            margin-bottom: 0.6rem;
+        }
+        .agent-step-card.step-search {
+            border-left-color: rgba(59, 130, 246, 0.8);
+        }
+        .agent-step-card.step-answer {
+            border-left-color: rgba(16, 185, 129, 0.8);
+        }
+        .agent-step-card.step-direct_chat {
+            border-left-color: rgba(139, 92, 246, 0.8);
+        }
+        .agent-step-card.step-fallback {
+            border-left-color: rgba(245, 158, 11, 0.85);
+        }
+        .agent-step-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 0.4rem;
+        }
+        .agent-step-title {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .agent-step-meta {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+        .agent-action-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.14rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.74rem;
+            font-weight: 600;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            line-height: 1.3;
+        }
+        .action-search {
+            background: rgba(59, 130, 246, 0.14);
+            color: #3b82f6;
+            border: 1px solid rgba(59, 130, 246, 0.35);
+        }
+        .action-answer {
+            background: rgba(16, 185, 129, 0.14);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.35);
+        }
+        .action-direct_chat {
+            background: rgba(139, 92, 246, 0.14);
+            color: #8b5cf6;
+            border: 1px solid rgba(139, 92, 246, 0.35);
+        }
+        .action-fallback {
+            background: rgba(245, 158, 11, 0.14);
+            color: #d97706;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+        }
+        .action-default {
+            background: rgba(128, 128, 128, 0.14);
+            border: 1px solid rgba(128, 128, 128, 0.3);
+        }
+        .agent-thought {
+            font-size: 0.86rem;
+            line-height: 1.5;
+            opacity: 0.92;
+            margin: 0 0 0.4rem 0;
+            white-space: pre-wrap;
+        }
+        .agent-query-box {
+            font-size: 0.81rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            padding: 0.35rem 0.55rem;
+            border-radius: 0.4rem;
+            background: rgba(128, 128, 128, 0.09);
+            border: 1px solid rgba(128, 128, 128, 0.2);
+            word-break: break-word;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -285,6 +378,84 @@ def _render_chunk_cards(chunks: list[dict[str, Any]]) -> None:
         )
 
 
+_AGENT_ACTION_META: dict[str, tuple[str, str, str]] = {
+    "search": ("action-search", "step-search", "🔍 search"),
+    "answer": ("action-answer", "step-answer", "✅ answer"),
+    "direct_chat": ("action-direct_chat", "step-direct_chat", "💬 direct_chat"),
+    "fallback": ("action-fallback", "step-fallback", "⚠️ fallback"),
+}
+
+
+def _render_agent_steps(agent_steps: list[dict[str, Any]]) -> None:
+    if not agent_steps:
+        return
+
+    st.markdown(f"**🤖 Ajan Karar Adımları ({len(agent_steps)})**")
+    for idx, step in enumerate(agent_steps, start=1):
+        step_num = html.escape(str(step.get("step", idx)))
+        raw_action = str(step.get("action") or "unknown").strip().lower()
+        badge_cls, card_cls, action_label = _AGENT_ACTION_META.get(
+            raw_action,
+            ("action-default", "", html.escape(raw_action)),
+        )
+
+        thought_raw = str(step.get("thought") or "").strip()
+        thought_html = (
+            f'<p class="agent-thought">{html.escape(thought_raw)}</p>'
+            if thought_raw
+            else ""
+        )
+
+        query_raw = step.get("query")
+        query_str = str(query_raw).strip() if query_raw is not None else ""
+        query_html = (
+            f'<div class="agent-query-box"><strong>Alt Sorgu:</strong> {html.escape(query_str)}</div>'
+            if query_str
+            else ""
+        )
+
+        meta_badges: list[str] = []
+        chunks_found = step.get("chunks_found")
+        if chunks_found is not None:
+            try:
+                chunks_int = int(chunks_found)
+                meta_badges.append(
+                    f'<span class="score-badge">📄 {chunks_int} parça</span>'
+                )
+            except (TypeError, ValueError):
+                pass
+
+        duration_ms = step.get("duration_ms")
+        if duration_ms is not None:
+            try:
+                duration_val = float(duration_ms)
+                meta_badges.append(
+                    f'<span class="score-badge">⏱️ {duration_val:.1f} ms</span>'
+                )
+            except (TypeError, ValueError):
+                pass
+
+        meta_html = "".join(meta_badges)
+        card_class_attr = f"agent-step-card {card_cls}".strip()
+
+        st.markdown(
+            f"""
+            <div class="{card_class_attr}">
+                <div class="agent-step-header">
+                    <div class="agent-step-title">
+                        <span>Adım #{step_num}</span>
+                        <span class="agent-action-badge {badge_cls}">{action_label}</span>
+                    </div>
+                    <div class="agent-step-meta">{meta_html}</div>
+                </div>
+                {thought_html}
+                {query_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 def _render_chat_observability(msg: dict[str, Any]) -> None:
     timings = msg.get("timings") or {}
     rewrite_ms = float(timings.get("rewrite_ms", 0.0))
@@ -294,6 +465,7 @@ def _render_chat_observability(msg: dict[str, Any]) -> None:
     rejection_reason = msg.get("rejection_reason")
     original_query = str(msg.get("original_query") or "").strip()
     rewritten_query = str(msg.get("rewritten_query") or "").strip()
+    agent_steps = msg.get("agent_steps") or []
     chunks = msg.get("chunks") or []
 
     with st.expander("🔬 Röntgen (Observability)", expanded=False):
@@ -304,6 +476,9 @@ def _render_chat_observability(msg: dict[str, Any]) -> None:
             col3.metric("LLM Üretim", f"{generation_ms:.1f} ms", delta="Atlandı", delta_color="off")
         else:
             col3.metric("LLM Üretim", f"{generation_ms:.1f} ms")
+
+        if agent_steps:
+            _render_agent_steps(agent_steps)
 
         if rewritten_query and original_query and rewritten_query != original_query:
             st.info(
@@ -483,6 +658,21 @@ def _render_sidebar() -> dict[str, Any]:
             disabled=is_search_only,
             help="Alakasız sorularda LLM çağrısını atlayarak halüsinasyonu ve maliyeti önler.",
         )
+        use_agent = st.toggle(
+            "🤖 Agentic RAG (Çok Adımlı Ajan)",
+            value=False,
+            disabled=is_search_only,
+            help="Karmaşık ve çok parçalı soruları alt sorgulara bölerek adım adım araştırır ve sentezler.",
+        )
+        max_agent_steps = 3
+        if use_agent and not is_search_only:
+            max_agent_steps = st.slider(
+                "Maksimum Ajan Adımı",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help="Ajanın yanıt üretmeden önce atabileceği en fazla araştırma/karar adımı.",
+            )
 
         with st.expander("Gelişmiş Eşik Ayarları", expanded=False):
             thresholds_disabled = is_search_only or not use_guardrail
@@ -549,6 +739,8 @@ def _render_sidebar() -> dict[str, Any]:
         "use_rerank": use_rerank,
         "use_rewrite": use_rewrite,
         "use_guardrail": use_guardrail,
+        "use_agent": bool(use_agent and not is_search_only),
+        "max_agent_steps": int(max_agent_steps),
         "min_rerank_score": float(min_rerank_score),
         "min_dense_score": float(min_dense_score),
         "min_bm25_score": float(min_bm25_score),
@@ -598,11 +790,12 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
     _render_message(user_msg)
 
     with st.chat_message("assistant"):
-        spinner_text = (
-            "Dokümanlar taranıyor ve yanıt hazırlanıyor..."
-            if mode == MODE_CHAT
-            else "Hibrit arama ve skorlama çalıştırılıyor..."
-        )
+        if mode == MODE_CHAT and config.get("use_agent"):
+            spinner_text = "Ajan soruyu analiz ediyor ve adım adım araştırıyor..."
+        elif mode == MODE_CHAT:
+            spinner_text = "Dokümanlar taranıyor ve yanıt hazırlanıyor..."
+        else:
+            spinner_text = "Hibrit arama ve skorlama çalıştırılıyor..."
         with st.spinner(spinner_text):
             try:
                 if mode == MODE_CHAT:
@@ -613,6 +806,8 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
                         use_rerank=config["use_rerank"],
                         use_rewrite=config["use_rewrite"],
                         use_guardrail=config["use_guardrail"],
+                        use_agent=config["use_agent"],
+                        max_agent_steps=config["max_agent_steps"],
                         min_rerank_score=config["min_rerank_score"],
                         min_dense_score=config["min_dense_score"],
                         min_bm25_score=config["min_bm25_score"],
@@ -629,6 +824,7 @@ def _handle_prompt(prompt: str, config: dict[str, Any]) -> None:
                         "rewritten_query": result.get("rewritten_query", cleaned_prompt),
                         "early_rejected": bool(result.get("early_rejected", False)),
                         "rejection_reason": result.get("rejection_reason"),
+                        "agent_steps": result.get("agent_steps") or [],
                         "chunks": result.get("chunks", []),
                         "timings": result.get("timings", {}),
                     }

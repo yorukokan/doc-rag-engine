@@ -19,6 +19,7 @@ def print_xray(
     rewritten_query: str | None = None,
     early_rejected: bool = False,
     rejection_reason: str | None = None,
+    agent_steps: list[dict] | None = None,
 ):
     print("\n--- RÖNTGEN (OBSERVABILITY) ---")
     if (
@@ -27,6 +28,17 @@ def print_xray(
         and rewritten_query.strip() != original_query.strip()
     ):
         print(f"Yeniden Yazılan Sorgu: {rewritten_query}")
+
+    if agent_steps:
+        print("Ajan Adımları:")
+        for step in agent_steps:
+            q_info = f' | sorgu="{step["query"]}"' if step.get("query") else ""
+            thought = step.get("thought") or ""
+            thought_info = f" | {thought}" if thought else ""
+            print(
+                f"  Adım #{step['step']} [{step['action']}]{q_info} | "
+                f"parça={step.get('chunks_found', 0)} | {step.get('duration_ms', 0.0)} ms{thought_info}"
+            )
 
     if early_rejected:
         print(f"Guardrail -> ERKEN REDDETME (LLM atlandı): {rejection_reason}")
@@ -90,6 +102,8 @@ def handle_question(
     min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE,
     min_dense_score: float = DEFAULT_MIN_DENSE_SCORE,
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE,
+    use_agent: bool = False,
+    max_agent_steps: int = 3,
 ):
     if search_only:
         t0 = time.perf_counter()
@@ -109,6 +123,8 @@ def handle_question(
         min_rerank_score=min_rerank_score,
         min_dense_score=min_dense_score,
         min_bm25_score=min_bm25_score,
+        use_agent=use_agent,
+        max_agent_steps=max_agent_steps,
     )
     if debug:
         print_xray(
@@ -120,6 +136,7 @@ def handle_question(
             rewritten_query=trace["rewritten_query"],
             early_rejected=trace.get("early_rejected", False),
             rejection_reason=trace.get("rejection_reason"),
+            agent_steps=trace.get("agent_steps"),
         )
 
     print(f"\nCEVAP:\n{trace['answer']}\n")
@@ -160,10 +177,23 @@ def main():
         default=5,
         help="Sohbet hafızasında tutulacak maksimum tur sayısı (varsayılan: 5)",
     )
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Çok adımlı Agentic RAG modunu aktif et",
+    )
+    parser.add_argument(
+        "--max-agent-steps",
+        type=int,
+        default=3,
+        help="Agentic RAG maksimum adım sayısı (varsayılan: 3)",
+    )
     args = parser.parse_args()
 
     if args.max_turns < 1:
         parser.error("--max-turns en az 1 olmalıdır.")
+    if args.max_agent_steps < 1:
+        parser.error("--max-agent-steps en az 1 olmalıdır.")
 
     use_rewrite = not args.no_rewrite
     use_guardrail = not args.no_guardrail
@@ -181,6 +211,8 @@ def main():
             min_rerank_score=args.min_rerank_score,
             min_dense_score=args.min_dense_score,
             min_bm25_score=args.min_bm25_score,
+            use_agent=args.agent,
+            max_agent_steps=args.max_agent_steps,
         )
         return
 
@@ -193,7 +225,8 @@ def main():
     print(
         f"Ayarlar -> top_k={args.top_k} | debug={args.debug} | "
         f"search_only={args.search_only} | rerank={args.rerank} | "
-        f"rewrite={use_rewrite} | guardrail={use_guardrail} | max_turns={args.max_turns}\n"
+        f"rewrite={use_rewrite} | guardrail={use_guardrail} | "
+        f"agent={args.agent} (max_steps={args.max_agent_steps}) | max_turns={args.max_turns}\n"
     )
 
     while True:
@@ -229,6 +262,8 @@ def main():
             min_rerank_score=args.min_rerank_score,
             min_dense_score=args.min_dense_score,
             min_bm25_score=args.min_bm25_score,
+            use_agent=args.agent,
+            max_agent_steps=args.max_agent_steps,
         )
 
 

@@ -112,6 +112,15 @@ class Timings(BaseModel):
     generation_ms: float
 
 
+class AgentStep(BaseModel):
+    step: int
+    thought: str
+    action: str
+    query: str | None = None
+    chunks_found: int
+    duration_ms: float
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     qdrant_connected: bool
@@ -134,6 +143,8 @@ class AskRequest(BaseModel):
     min_rerank_score: float = DEFAULT_MIN_RERANK_SCORE
     min_dense_score: float = DEFAULT_MIN_DENSE_SCORE
     min_bm25_score: float = DEFAULT_MIN_BM25_SCORE
+    use_agent: bool = False
+    max_agent_steps: int = Field(default=3, ge=1, le=10)
 
     @field_validator("question")
     @classmethod
@@ -166,6 +177,7 @@ class AskResponse(BaseModel):
     rejection_reason: str | None = None
     chunks: list[ChunkResult]
     timings: Timings
+    agent_steps: list[AgentStep] = Field(default_factory=list)
 
 
 class SearchRequest(BaseModel):
@@ -257,6 +269,8 @@ def ask(req: AskRequest) -> AskResponse:
             min_rerank_score=req.min_rerank_score,
             min_dense_score=req.min_dense_score,
             min_bm25_score=req.min_bm25_score,
+            use_agent=req.use_agent,
+            max_agent_steps=req.max_agent_steps,
         )
     except Exception:
         logger.exception("POST /ask sırasında beklenmeyen hata oluştu (session_id=%s)", session_id)
@@ -281,6 +295,7 @@ def ask(req: AskRequest) -> AskResponse:
             retrieval_ms=float(trace.get("retrieval_ms", 0.0)),
             generation_ms=float(trace.get("generation_ms", 0.0)),
         ),
+        agent_steps=[AgentStep(**s) for s in (trace.get("agent_steps") or [])],
     )
 
 

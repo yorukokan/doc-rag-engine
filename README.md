@@ -41,7 +41,9 @@ Dokümanlar (data/ — .md, .txt, .pdf)
 [7. Generator]         ──► OpenAI-Uyumlu LLM API (temp=0.1, geçmiş farkında) ──► Zorunlu [dosya - Bölüm] Citation + Süre Ölçümü
         │
         ▼
-[8. CLI / Eval]        ──► Etkileşimli Röntgen CLI (--debug, --rerank, --no-rewrite, --no-guardrail, --max-turns) & 20 Soruluk LLM-as-a-Judge Karnesi
+[8. CLI / API / Eval]  ──► Etkileşimli Röntgen CLI (--debug, --rerank, --no-rewrite, --no-guardrail, --max-turns)
+                           FastAPI REST API (src/api.py: /health, /ask, /search, /sessions/{session_id}, Swagger /docs)
+                           20 Soruluk LLM-as-a-Judge Karnesi (eval/run_eval.py)
 ```
 
 ### ✨ Temel Mühendislik Özellikleri
@@ -56,6 +58,7 @@ Dokümanlar (data/ — .md, .txt, .pdf)
 - **Erken Reddetme Kapısı / Guardrail (`src/guardrail.py`)**: Reranker/Retriever ile Generator arasında konumlanır. Parça dönmezse veya en yüksek skorlar belirlenen eşiklerin altında kalırsa (`--rerank` açıkken `rerank_score < -3.0`; kapalıyken veya `rerank_score` yokken `dense_score < 0.45` ve `bm25_score < 7.0`) LLM'i hiç çağırmadan **0.0 ms** üretim süresiyle sabit reddetme mesajı (`"Verilen dokümanlarda bu bilgi bulunmamaktadır."`) döndürür. Erken reddedilen sorular `ConversationMemory` sohbet hafızasına yazılmaz.
 - **Halüsinasyon Koruması, Citation ve Süre İzleme (`src/llm_client.py`, `src/generator.py`)**: Ortak `.env` yapılandırmalı OpenAI-uyumlu istemci üzerinden düşük sıcaklık (`temperature=0.1`) ve katı sistem kurallarıyla çalışır. Sohbet geçmişini yalnızca konuşma akışını anlamak için kullanır; tüm olgusal bilgileri o turda getirilen `DOKÜMANLAR` bölümünden alır, her bilginin sonuna `[dosya_adi - Bölüm]` kaynağı ekler, doküman dışı soruları reddeder ve `rewrite_ms`, `retrieval_ms`, `generation_ms` sürelerini ölçer.
 - **Etkileşimli Röntgen CLI (`src/cli.py`)**: `--debug`, `--search-only`, `--rerank`, `--top-k`, `--query`, `--no-rewrite`, `--no-guardrail`, `--min-rerank-score`, `--min-dense-score`, `--min-bm25-score` ve `--max-turns` bayraklarını destekler; her soruda (varsa) yeniden yazılan sorguyu, Guardrail erken reddetme bilgisini, Vektör (cosine), BM25, RRF, Rerank skorlarını ve Rewrite/Arama/Üretim gecikmelerini canlı gösterir.
+- **REST API & Oturum Yönetimi (`src/api.py`)**: FastAPI tabanlı üretim uyumlu HTTP katmanı sunar; otomatik OpenAPI/Swagger (`/docs`) dokümantasyonu üretir. Bellek içi `SessionStore` (`threading.Lock` + `OrderedDict`, varsayılan `max_sessions=100`, `default_max_turns=5`) ile thread-safe ve LRU tahliyeli çok turlu oturum yönetimi sağlar (erken reddedilen sorular oturuma kaydedilmez). `src/retriever.py` içindeki `_qdrant_lock` ve `finally: client.close()` yapısı ile yerel disk tabanlı Qdrant erişiminde eşzamanlı kilit çakışmasını önler. Pydantic v2 doğrulaması (`question`/`query` boşluk kontrolü, `top_k` `1..20`, `candidate_k` `1..50`, `rrf_k >= 1`, `session_id` `^[A-Za-z0-9_-]{1,128}$`) uygular; `/health` ve 502/503 hata yanıtlarında `LLM_API_KEY`, `LLM_BASE_URL` veya iç istisna detaylarını dışarı sızdırmaz.
 - **Otomatik Değerlendirme ve LLM-as-a-Judge (`eval/run_eval.py`)**: `Recall@1`, `Recall@2`, Citation uyumu, tuzak soru reddi, Guardrail erken reddetme / yanlış pozitif sayıları, ortalama latency ve hakem LLM üzerinden **Sadakat (Faithfulness)** & **Cevap Alakası (Relevance)** metriklerini ölçer (`--no-guardrail` ile kapısız karşılaştırmayı destekler).
 
 ---
@@ -92,11 +95,13 @@ doc-rag-engine/
 │   ├── reranker.py                    # Multilingual Cross-Encoder 2. aşama sıralayıcı
 │   ├── guardrail.py                   # Skor eşiği tabanlı Erken Reddetme Kapısı (Guardrail)
 │   ├── generator.py                   # OpenAI-uyumlu LLM, Citation ve süre ölçüm katmanı
-│   └── cli.py                         # Etkileşimli sohbet ve Observability (Röntgen) CLI
+│   ├── cli.py                         # Etkileşimli sohbet ve Observability (Röntgen) CLI
+│   └── api.py                         # FastAPI REST API, Pydantic v2 şemaları ve LRU SessionStore
 ├── eval/
 │   ├── dataset.json                   # 20 soruluk test veri seti (16 normal + 4 tuzak soru)
 │   └── run_eval.py                    # Recall@1/2, Citation, Latency ve LLM-as-a-Judge scripti
 ├── tests/
+│   ├── test_api.py                    # REST API endpoint, doğrulama, LRU oturum ve sır izolasyonu testleri
 │   ├── test_guardrail.py              # Erken reddetme kapısı, generator ve CLI hafıza testleri
 │   └── test_memory_and_rewriter.py    # Sohbet hafızası, query rewriter ve generator birim testleri
 ├── .env.example                       # Ortam değişkenleri şablonu
@@ -151,7 +156,40 @@ python3 eval/run_eval.py --rerank --no-guardrail              # Guardrail kapal�
 - `/clear` veya `/reset`: Aktif oturumdaki sohbet hafızasını sıfırlar.
 - `q`, `exit` veya `quit`: Etkileşimli sohbetten çıkış yapar.
 
-5. **Birim Testlerini Çalıştırma:**
+5. **FastAPI REST API Sunucusunu Başlatma ve Kullanım:**
+
+```bash
+.venv/bin/uvicorn api:app --app-dir src --reload
+# veya aktif sanal ortam içinde:
+uvicorn api:app --app-dir src --reload
+```
+
+Sunucu ayağa kalktıktan sonra etkileşimli Swagger/OpenAPI arayüzüne **`http://127.0.0.1:8000/docs`** adresinden erişebilirsiniz.
+
+| Metot & Yol | Açıklama | Temel Parametre / Yanıt Özeti |
+| :--- | :--- | :--- |
+| `GET /health` | Servis sağlık ve konfigürasyon kontrolü | Qdrant durumu (`ok`/`degraded`), `points_count`, model adları, `llm_configured` |
+| `POST /ask` | Çok turlu RAG soru-cevap + izleme | `question`, `session_id`, `top_k` (`1..20`, varsayılan `3`), `use_rerank`, `use_rewrite`, `use_guardrail`, eşik skorları |
+| `POST /search` | LLM çağırmadan hibrit arama (+ opsiyonel rerank) | `query`, `top_k` (`1..20`, varsayılan `3`), `use_rerank`, `rrf_k` (varsayılan `10`), `candidate_k` (`1..50`, varsayılan `6`) |
+| `GET /sessions/{session_id}` | Oturum sohbet geçmişini getirme | `session_id`, `turn_count`, `max_turns`, `messages` (yoksa `404`) |
+| `DELETE /sessions/{session_id}` | Oturum sohbet geçmişini silme | `session_id`, `deleted: true` (yoksa `404`) |
+
+Örnek `curl` istekleri:
+
+```bash
+# 1) Sağlık kontrolü ve çok turlu soru-cevap (/ask)
+curl -s http://127.0.0.1:8000/health
+curl -s -X POST http://127.0.0.1:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Wildcard DNS nedir?", "session_id": "demo-1", "use_rerank": true}'
+
+# 2) LLM çağırmadan hibrit arama (/search)
+curl -s -X POST http://127.0.0.1:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Wildcard DNS", "top_k": 3, "use_rerank": true}'
+```
+
+6. **Birim Testlerini Çalıştırma:**
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v

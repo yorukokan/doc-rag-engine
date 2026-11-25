@@ -4,3 +4,5 @@ rank-bm25
 openai
 python-dotenv
 pypdf
+fastapi
+uvicorn

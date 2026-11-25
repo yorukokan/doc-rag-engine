@@ -1,19 +1,56 @@
+import logging
 import re
+import threading
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from rank_bm25 import BM25Okapi
+
+logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "dokumanlar"
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 _embedder = None
+_embedder_lock = threading.Lock()
+_qdrant_lock = threading.Lock()
 
 
 def get_embedder():
     global _embedder
     if _embedder is None:
-        _embedder = TextEmbedding(model_name=EMBEDDING_MODEL)
+        with _embedder_lock:
+            if _embedder is None:
+                _embedder = TextEmbedding(model_name=EMBEDDING_MODEL)
     return _embedder
+
+
+def get_qdrant_health() -> dict:
+    with _qdrant_lock:
+        client = None
+        try:
+            client = QdrantClient(path="qdrant_data")
+            collection_exists = bool(client.collection_exists(COLLECTION_NAME))
+            points_count = None
+            if collection_exists:
+                info = client.get_collection(COLLECTION_NAME)
+                points_count = info.points_count
+            return {
+                "qdrant_connected": True,
+                "collection_name": COLLECTION_NAME,
+                "collection_exists": collection_exists,
+                "points_count": points_count,
+            }
+        except Exception as exc:
+            logger.warning("Qdrant sağlık kontrolü başarısız: %s", exc)
+            return {
+                "qdrant_connected": False,
+                "collection_name": COLLECTION_NAME,
+                "collection_exists": False,
+                "points_count": None,
+            }
+        finally:
+            if client is not None:
+                client.close()
 
 
 def tokenize(text: str) -> list[str]:
@@ -31,22 +68,23 @@ def search(
     embedder = get_embedder()
     query_vector = list(embedder.embed([query]))[0].tolist()
 
-    client = QdrantClient(path="qdrant_data")
-    try:
-        # 1. Vektör Araması (Anlamsal)
-        dense_response = client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_vector,
-            limit=20,
-        )
-        # 2. BM25 için koleksiyondaki tüm kartları çek
-        all_points, _ = client.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=1000,
-            with_payload=True,
-        )
-    finally:
-        client.close()
+    with _qdrant_lock:
+        client = QdrantClient(path="qdrant_data")
+        try:
+            # 1. Vektör Araması (Anlamsal)
+            dense_response = client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=query_vector,
+                limit=20,
+            )
+            # 2. BM25 için koleksiyondaki tüm kartları çek
+            all_points, _ = client.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=1000,
+                with_payload=True,
+            )
+        finally:
+            client.close()
 
     # Her kartı ID'sine göre sakla
     docs_by_id = {p.payload["chunk_id"]: p.payload for p in all_points}

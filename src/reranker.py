@@ -1,14 +1,18 @@
+import threading
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3-int8"
 
 _reranker = None
+_reranker_lock = threading.Lock()
 
 
 def get_reranker() -> TextCrossEncoder:
     global _reranker
     if _reranker is None:
-        _reranker = TextCrossEncoder(model_name=RERANK_MODEL)
+        with _reranker_lock:
+            if _reranker is None:
+                _reranker = TextCrossEncoder(model_name=RERANK_MODEL)
     return _reranker
 
 

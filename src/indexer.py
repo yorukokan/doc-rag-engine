@@ -9,7 +9,6 @@ from qdrant_client import QdrantClient, models
 from chunker import chunk_file, load_and_chunk_folder
 from retriever import (
     COLLECTION_NAME,
-    EMBEDDING_MODEL,
     QDRANT_PATH,
     _qdrant_lock,
     get_embedder,

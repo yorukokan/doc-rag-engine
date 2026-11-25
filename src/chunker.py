@@ -21,7 +21,6 @@ def _split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]
     """Tek bir uzun paragrafı kelime sınırlarından bölerek overlap ile parçalar."""
     parts = []
     start = 0
-    step = max(1, max_chars - overlap_chars)
 
     while start < len(text):
         end = start + max_chars

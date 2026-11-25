@@ -2,6 +2,8 @@
 
 # Doc-RAG Engine — Two-Stage Hybrid Search, Reranking & Evaluation Pipeline
 
+[![CI](https://github.com/yorukokan/doc-rag-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/yorukokan/doc-rag-engine/actions/workflows/ci.yml)
+
 **Framework Bağımsız · Hibrit Arama (Dense + BM25 RRF) · Multilingual Cross-Encoder Reranker · LLM-as-a-Judge & Observability**
 
 [![GitHub](https://img.shields.io/badge/GitHub-yorukokan-181717?style=for-the-badge&logo=github)](https://github.com/yorukokan)
@@ -111,6 +113,9 @@ Sistemin arama ve üretim kalitesi `eval/run_eval.py --rerank --judge` ile otoma
 
 ```text
 doc-rag-engine/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                     # GitHub Actions CI pipeline (lint + birim testler)
 ├── data/                              # Teknik dokümanlar (.md, .txt, .pdf)
 ├── src/
 │   ├── chunker.py                     # Çoklu format (.md/.txt/.pdf) + Chunk Overlap motoru
@@ -144,6 +149,7 @@ doc-rag-engine/
 │   └── test_ui_client.py              # FastAPI istemcisi (ui_client) MockTransport birim testleri
 ├── .env.example                       # Ortam değişkenleri şablonu
 ├── .gitignore
+├── pyproject.toml                     # Ruff lint yapılandırması (py312, E9/F)
 └── requirements.txt
 ```
 
@@ -269,10 +275,14 @@ streamlit run src/ui.py
 
 Arayüze tarayıcınızdan **`http://localhost:8501`** adresinden erişebilir, sol kenar çubuğundan canlı `/health` durumunu, **📚 Bilgi Bankası (Dokümanlar)** bölümünü (sürükle-bırak `.md`/`.txt`/`.pdf` doküman yükleme, `Aynı isimde varsa üzerine yaz` seçeneğiyle `📤 Yükle ve İndeksle`, yüklü doküman/parça özeti, `🔄 Yenile` ve `🗑️` ile tek tıkla silme), çalışma modunu, **🤖 Agentic RAG (Çok Adımlı Ajan)** anahtarını (`Maksimum Ajan Adımı` `1..5`), **⚡ Canlı Akış (Streaming)** anahtarını (`POST /ask/stream` ile kelime/token bazlı canlı yanıt akışı; kapatılırsa `/ask` kullanılır) ve Guardrail eşiklerini yönetebilirsiniz. Ajan modu açıkken her yanıtın altındaki **🔬 Röntgen (Observability)** panelinde **🤖 Ajan Karar Adımları** (`search`, `answer`, `direct_chat`, `fallback` aksiyonları, düşünce gerekçesi, alt sorgu, bulunan parça sayısı ve adım süresi) görüntülenir.
 
-7. **Birim Testlerini Çalıştırma (110 Test — `tests/test_eval.py` dahil):**
+7. **Birim Testlerini Çalıştırma ve GitHub Actions CI (110 Test — `tests/test_eval.py` dahil):**
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 # veya aktif sanal ortam içinde:
 python3 -m unittest discover -s tests -v
 ```
+
+**GitHub Actions CI (`.github/workflows/ci.yml`):** `main` dalına yapılan `push` ve `pull_request` olaylarında (ve manuel `workflow_dispatch` tetiklemesinde) Python 3.12 üzerinde iki iş otomatik çalıştırılır:
+- **`lint`**: `pyproject.toml` (`target-version = "py312"`, `line-length = 120`, `E9`/`F` kuralları) ile `ruff check src eval tests` ve `python -m compileall -q src eval tests` sözdizimi kontrollerini yürütür.
+- **`test`**: `OPENAI_API_KEY="ci-dummy-key"` ile dış API bağımlılığı olmadan 110 birim testini (`python -m unittest discover -s tests -v`) çalıştırır.

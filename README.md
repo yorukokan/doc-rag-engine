@@ -1,22 +1,59 @@
 <div align="center">
 
-# Doc-RAG Engine — Two-Stage Hybrid Search, Reranking & Evaluation Pipeline
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:0B0F19,40:0EA5E9,75:6366F1,100:10B981&height=210&section=header&text=Doc-RAG%20Engine&fontSize=48&fontColor=F8FAFC&fontAlignY=38&desc=Hybrid%20Search%20%C2%B7%20Cross-Encoder%20Reranking%20%C2%B7%20Agentic%20RAG%20%C2%B7%20Evaluation&descSize=16&descAlignY=62&animation=fadeIn" alt="Doc-RAG Engine Header" />
+
+<a href="https://github.com/yorukokan/doc-rag-engine">
+  <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=18&duration=2600&pause=900&color=38BDF8&center=true&vCenter=true&width=780&lines=Framework-Free+Pure+Python+RAG+Engine;Hybrid+Search+(Dense+%2B+BM25+RRF)+%2B+Cross-Encoder+Reranker;Multi-Step+Agentic+RAG+%C2%B7+Guardrail+%C2%B7+SSE+Streaming;FastAPI+%C2%B7+Streamlit+UI+%C2%B7+SQLite+Sessions+%C2%B7+127+Tests" alt="Typing SVG" />
+</a>
+
+<br/>
 
 [![CI](https://github.com/yorukokan/doc-rag-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/yorukokan/doc-rag-engine/actions/workflows/ci.yml)
 
-**Framework Bağımsız · Hibrit Arama (Dense + BM25 RRF) · Multilingual Cross-Encoder Reranker · LLM-as-a-Judge & Observability**
-
-[![GitHub](https://img.shields.io/badge/GitHub-yorukokan-181717?style=for-the-badge&logo=github)](https://github.com/yorukokan)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Okan_Yörük-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/okanyoruk)
-[![Email](https://img.shields.io/badge/E--Posta-okanyoruk.tr%40gmail.com-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:okanyoruk.tr@gmail.com)
+<p>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&labelColor=0B0F19&logo=python&logoColor=white" alt="Python 3.12" />
+  </a>
+  <a href="https://fastapi.tiangolo.com/">
+    <img src="https://img.shields.io/badge/FastAPI-REST_%2B_SSE-009688?style=for-the-badge&labelColor=0B0F19&logo=fastapi&logoColor=white" alt="FastAPI" />
+  </a>
+  <a href="https://github.com/yorukokan">
+    <img src="https://img.shields.io/badge/GitHub-yorukokan-181717?style=for-the-badge&labelColor=0B0F19&logo=github&logoColor=white" alt="GitHub" />
+  </a>
+  <a href="https://linkedin.com/in/okanyoruk">
+    <img src="https://img.shields.io/badge/LinkedIn-Okan_Y%C3%B6r%C3%BCk-0A66C2?style=for-the-badge&labelColor=0B0F19&logo=linkedin&logoColor=white" alt="LinkedIn" />
+  </a>
+  <a href="mailto:okanyoruk.tr@gmail.com">
+    <img src="https://img.shields.io/badge/Email-okanyoruk.tr%40gmail.com-EA4335?style=for-the-badge&labelColor=0B0F19&logo=gmail&logoColor=white" alt="Email" />
+  </a>
+</p>
 
 </div>
 
 ---
 
-## 📌 Mimari Genel Bakış
+## 🎯 Overview · Proje Özeti
 
-Bu proje; LangChain veya LlamaIndex gibi soyutlama katmanlarına bağımlı kalmadan **saf Python** ile sıfırdan geliştirilmiş, üretim (production) standartlarında ölçülebilir bir **Retrieval-Augmented Generation (RAG)** motorudur. Markdown, düz metin ve PDF dokümanlarını anlamsal bütünlüğü koruyarak (**Chunk Overlap**) parçalar, yerel vektör veritabanında indeksler, çok turlu sohbetlerde **Sliding Window Hafıza** ve **Query Rewriting** ile takip sorularını bağımsız arama sorgularına dönüştürür, iki aşamalı arama (**Hybrid Search + Cross-Encoder Reranking**) ile en alakalı bağlamı getirir ve zorunlu kaynak gösterimi (**Citation**) ile yanıt üretir.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🇬🇧 English</h3>
+      <p>
+        <b>Doc-RAG Engine</b> is a production-grade, measurable <b>Retrieval-Augmented Generation (RAG)</b> engine built from scratch in <b>pure Python</b> without framework abstractions like LangChain or LlamaIndex. It chunks Markdown, plain text, and PDF documents with semantic boundary preservation (<b>Chunk Overlap</b>), indexes them into a local disk-backed <b>Qdrant</b> vector database, resolves follow-up questions via <b>Sliding Window Memory</b> and <b>Query Rewriting</b>, retrieves context through a two-stage pipeline (<b>Dense + BM25 RRF Hybrid Search</b> &amp; <b>Multilingual Cross-Encoder Reranking</b>), supports optional <b>Multi-Step Agentic RAG</b> and an <b>Early-Rejection Guardrail</b>, and generates grounded answers with mandatory <code>[source - section]</code> citations across CLI, FastAPI (REST + SSE), Streamlit UI, Docker Compose, and automated LLM-as-a-Judge evaluation suites.
+      </p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🇹🇷 Türkçe</h3>
+      <p>
+        Bu proje; LangChain veya LlamaIndex gibi soyutlama katmanlarına bağımlı kalmadan <b>saf Python</b> ile sıfırdan geliştirilmiş, üretim (production) standartlarında ölçülebilir bir <b>Retrieval-Augmented Generation (RAG)</b> motorudur. Markdown, düz metin ve PDF dokümanlarını anlamsal bütünlüğü koruyarak (<b>Chunk Overlap</b>) parçalar, yerel vektör veritabanında indeksler, çok turlu sohbetlerde <b>Sliding Window Hafıza</b> ve <b>Query Rewriting</b> ile takip sorularını bağımsız arama sorgularına dönüştürür, iki aşamalı arama (<b>Hybrid Search + Cross-Encoder Reranking</b>) ile en alakalı bağlamı getirir ve zorunlu kaynak gösterimi (<b>Citation</b>) ile yanıt üretir.
+      </p>
+    </td>
+  </tr>
+</table>
+
+---
+
+## 🏗️ Architecture · Mimari
 
 ```text
 Dokümanlar (data/ — .md, .txt, .pdf)
@@ -54,7 +91,56 @@ Dokümanlar (data/ — .md, .txt, .pdf)
                                 Çok Turlu & Multi-Hop Agentic Değerlendirme Karnesi (eval/run_advanced_eval.py)
 ```
 
-### ✨ Temel Mühendislik Özellikleri
+---
+
+## ✨ Key Features · Öne Çıkan Özellikler
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h4>📄 Multi-Format Chunking &amp; Local Indexing</h4>
+      <b>EN:</b> Heading/paragraph-aware chunking (800 chars, 120-char overlap) for <code>.md</code>, <code>.txt</code>, and <code>.pdf</code> with 384-dim multilingual FastEmbed vectors stored on local disk Qdrant.<br/>
+      <b>TR:</b> <code>.md</code>, <code>.txt</code> ve <code>.pdf</code> için başlık/paragraf uyumlu parçalama (800 karakter, 120 overlap) ve yerel disk Qdrant üzerinde 384 boyutlu FastEmbed vektör indeksleme.<br/>
+      <code>src/chunker.py</code> · <code>src/indexer.py</code>
+    </td>
+    <td width="50%" valign="top">
+      <h4>🔍 Two-Stage Hybrid Search &amp; Reranking</h4>
+      <b>EN:</b> Stage 1 fuses Dense cosine vector search and BM25Okapi via RRF with optional <code>source_filter</code>; Stage 2 re-scores candidates with local multilingual Cross-Encoder (<code>bge-reranker-v2-m3-int8</code>).<br/>
+      <b>TR:</b> 1. aşamada Dense vektör ve BM25Okapi sonuçları <code>source_filter</code> destekli RRF ile birleştirilir; 2. aşamada yerel Cross-Encoder ile hassas yeniden sıralama yapılır.<br/>
+      <code>src/retriever.py</code> · <code>src/reranker.py</code>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h4>🧠 Sliding Window Memory &amp; Query Rewriting</h4>
+      <b>EN:</b> Keeps the last <code>max_turns=5</code> turns and rewrites pronoun-heavy follow-ups into standalone queries at <code>temperature=0.0</code>, skipping Turn 1 with <code>0.0 ms</code> overhead.<br/>
+      <b>TR:</b> Son <code>max_turns=5</code> turu kayan pencerede tutar; takip sorularındaki zamirleri bağımsız sorguya çevirir, 1. turda LLM çağırmadan <code>0.0 ms</code> ile atlar.<br/>
+      <code>src/memory.py</code> · <code>src/rewriter.py</code>
+    </td>
+    <td width="50%" valign="top">
+      <h4>🤖 Agentic RAG &amp; Early-Rejection Guardrail</h4>
+      <b>EN:</b> Bounded Plan → Search → Evaluate loop (<code>search</code>, <code>answer</code>, <code>direct_chat</code>, <code>fallback</code>) with query/chunk deduplication, plus score-threshold Guardrail skipping LLM at <code>0.0 ms</code> for out-of-domain queries.<br/>
+      <b>TR:</b> Sınırlı Planla → Ara → Değerlendir döngüsü, tekrar koruması ve eşik altı skorlarda LLM'i çağırmadan <code>0.0 ms</code> ile sabit reddetme yapan Erken Reddetme Kapısı.<br/>
+      <code>src/agent.py</code> · <code>src/guardrail.py</code>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h4>🌐 FastAPI (REST + SSE), SQLite Sessions &amp; Streamlit UI</h4>
+      <b>EN:</b> Production FastAPI layer with SSE streaming (<code>/ask/stream</code>), thread-safe WAL SQLite LRU sessions, live <code>/documents</code> CRUD, and a full Streamlit web UI with X-Ray observability.<br/>
+      <b>TR:</b> SSE canlı akışlı FastAPI katmanı, WAL &amp; LRU destekli SQLite kalıcı oturum deposu, canlı doküman yönetimi ve Röntgen panelli Streamlit web arayüzü.<br/>
+      <code>src/api.py</code> · <code>src/session_store.py</code> · <code>src/ui.py</code> · <code>src/ui_client.py</code>
+    </td>
+    <td width="50%" valign="top">
+      <h4>🧪 Observability CLI &amp; Automated Evaluation</h4>
+      <b>EN:</b> Interactive X-Ray CLI with live score/latency telemetry, 20-question LLM-as-a-Judge benchmark, and Multi-Turn + Multi-Hop (Classic vs Agentic) evaluation suite with JSON reporting.<br/>
+      <b>TR:</b> Canlı skor/gecikme röntgenli CLI, 20 soruluk LLM-as-a-Judge karnesi ve JSON raporlu Çok Turlu &amp; Multi-Hop Classic vs Agentic değerlendirme paketi.<br/>
+      <code>src/cli.py</code> · <code>eval/run_eval.py</code> · <code>eval/run_advanced_eval.py</code>
+    </td>
+  </tr>
+</table>
+
+### 🔬 Temel Mühendislik Özellikleri · Detailed Engineering Specifications
 
 - **Çoklu Format ve Chunk Overlap (`src/chunker.py`)**: `.md`, `.txt` ve `.pdf` (`pypdf`) dosyalarını destekler. Başlık (`#`, `##`, `###`) ve paragraf sınırlarını koruyarak 800 karakterlik parçalara ayırır; uzun metinlerde bağlam kopmasını önlemek için **120 karakterlik Chunk Overlap** uygular.
 - **Sıfır Docker Bağımlılıklı Yerel İndeksleme (`src/indexer.py`)**: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` modeli (FastEmbed) ile üretilen 384 boyutlu vektörler, yerel disk tabanlı **Qdrant** üzerinde Cosine benzerlik metriğiyle saklanır.
@@ -88,11 +174,12 @@ Dokümanlar (data/ — .md, .txt, .pdf)
 
 ---
 
-## 📊 Değerlendirme & Metrik Sonuçları (Evaluation)
+## 📊 Evaluation & Benchmarks · Değerlendirme ve Metrik Sonuçları
 
-Sistemin arama ve üretim kalitesi `eval/run_eval.py --rerank --judge` ile otomatik olarak ölçülmüştür.
+> **EN:** Retrieval and generation quality are automatically benchmarked via `eval/run_eval.py --rerank --judge` (20 questions: 16 in-domain + 4 out-of-domain trap questions) and extended with Multi-Turn & Multi-Hop Classic vs. Agentic evaluations in `eval/run_advanced_eval.py`.  
+> **TR:** Sistemin arama ve üretim kalitesi `eval/run_eval.py --rerank --judge` ile otomatik olarak ölçülmüştür.
 
-**Test Kapsamı:** `20 Soru (16 Doküman İçi + 4 Tuzak Soru)`
+**Test Kapsamı / Test Scope:** `20 Soru (16 Doküman İçi + 4 Tuzak Soru)`
 
 | Değerlendirme Metriği | V1 (Sadece Vektör) | V2 (Hybrid: Vektör + BM25 RRF) | V3 (Hybrid + Cross-Encoder Rerank) | Durum |
 | :--- | :---: | :---: | :---: | :---: |
@@ -111,7 +198,28 @@ Sistemin arama ve üretim kalitesi `eval/run_eval.py --rerank --judge` ile otoma
 
 ---
 
-## 📂 Proje Yapısı
+## 🛠️ Tech Stack · Teknoloji Yığını
+
+<div align="center">
+  <img src="https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&labelColor=0D1117&logo=python&logoColor=white" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&labelColor=0D1117&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Uvicorn-499848?style=for-the-badge&labelColor=0D1117&logo=gunicorn&logoColor=white" alt="Uvicorn" />
+  <img src="https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&labelColor=0D1117&logo=streamlit&logoColor=white" alt="Streamlit" />
+  <img src="https://img.shields.io/badge/Qdrant-DC244C?style=for-the-badge&labelColor=0D1117&logo=qdrant&logoColor=white" alt="Qdrant" />
+  <img src="https://img.shields.io/badge/FastEmbed-6366F1?style=for-the-badge&labelColor=0D1117&logo=onnx&logoColor=white" alt="FastEmbed" />
+  <img src="https://img.shields.io/badge/Rank--BM25-0EA5E9?style=for-the-badge&labelColor=0D1117&logo=elasticsearch&logoColor=white" alt="Rank-BM25" />
+  <img src="https://img.shields.io/badge/OpenAI_SDK-412991?style=for-the-badge&labelColor=0D1117&logo=openai&logoColor=white" alt="OpenAI SDK" />
+  <img src="https://img.shields.io/badge/SQLite_WAL-003B57?style=for-the-badge&labelColor=0D1117&logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/HTTPX-2563EB?style=for-the-badge&labelColor=0D1117&logo=python&logoColor=white" alt="HTTPX" />
+  <img src="https://img.shields.io/badge/pypdf-E11D48?style=for-the-badge&labelColor=0D1117&logo=adobeacrobatreader&logoColor=white" alt="pypdf" />
+  <img src="https://img.shields.io/badge/Ruff-D7FF64?style=for-the-badge&labelColor=0D1117&logo=ruff&logoColor=black" alt="Ruff" />
+  <img src="https://img.shields.io/badge/Docker_%26_Compose-2496ED?style=for-the-badge&labelColor=0D1117&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&labelColor=0D1117&logo=githubactions&logoColor=white" alt="GitHub Actions" />
+</div>
+
+---
+
+## 📂 Project Structure · Proje Yapısı
 
 ```text
 doc-rag-engine/
@@ -162,7 +270,7 @@ doc-rag-engine/
 
 ---
 
-## 🚀 Kurulum ve Çalıştırma
+## 🚀 Getting Started · Kurulum ve Çalıştırma
 
 1. Depoyu klonlayın ve izole Python sanal ortamını aktif edin:
 
@@ -312,3 +420,13 @@ python3 -m unittest discover -s tests -v
 **GitHub Actions CI (`.github/workflows/ci.yml`):** `main` dalına yapılan `push` ve `pull_request` olaylarında (ve manuel `workflow_dispatch` tetiklemesinde) Python 3.12 üzerinde iki iş otomatik çalıştırılır:
 - **`lint`**: `pyproject.toml` (`target-version = "py312"`, `line-length = 120`, `E9`/`F` kuralları) ile `ruff check src eval tests` ve `python -m compileall -q src eval tests` sözdizimi kontrollerini yürütür.
 - **`test`**: `OPENAI_API_KEY="ci-dummy-key"` ile dış API bağımlılığı olmadan 127 birim testini (`python -m unittest discover -s tests -v`) çalıştırır.
+
+---
+
+<div align="center">
+
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:0B0F19,40:0EA5E9,75:6366F1,100:10B981&height=100&section=footer" alt="Footer" />
+
+<sub>⚡ <b>Okan Yörük</b> · Doc-RAG Engine · <a href="https://github.com/yorukokan">github.com/yorukokan</a></sub>
+
+</div>
